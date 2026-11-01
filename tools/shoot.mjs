@@ -37,6 +37,14 @@ const targets = (only.length ? R.widgets.filter(w => only.includes(w.id)) : R.wi
 fs.mkdirSync(OUT, { recursive: true });
 const profile = path.join(ROOT, '.tmp', 'chrome-shot');
 
+/* 入场动画类组件的截图陷阱：--virtual-time-budget 只推进定时器和 rAF，
+   不推进 CSS 动画的时间线，所以"默认 opacity:0、滚动进来才点亮"的组件
+   会被拍成空白。这类组件都写了 prefers-reduced-motion 降级分支
+   （不隐藏、直接可见），加 --force-prefers-reduced-motion 就能拍到终态。
+   只对确实需要的项目开：noise-glitch 的降级分支会把错色层整个隐藏，
+   全局加这个 flag 反而拍出不像它自己的图。 */
+const SETTLED = new Set(['stagger-reveal']);
+
 /* 组件是单文件自包含的，直接用 file:// 截；
    index.html 要 fetch data/fragments/*.json，file:// 下会被 CORS 拦，
    所以主页/详情页用 --allow-file-access-from-files。 */
@@ -66,7 +74,8 @@ for (const w of targets) {
   if (!fs.existsSync(f)) { problems.push({ id: w.id, msg: '文件不存在' }); console.log(`  ✗ ${w.id.padEnd(20)} 缺文件`); continue; }
   const h = FULL ? Math.max(320, w.viewport || 320) : CARD_H;
   const png = path.join(OUT, w.id + '.png');
-  const { bytes, bad } = shoot('file:///' + f.replace(/\\/g, '/'), png, CARD_W, h);
+  const { bytes, bad } = shoot('file:///' + f.replace(/\\/g, '/'), png, CARD_W, h,
+    SETTLED.has(w.id) ? ['--force-prefers-reduced-motion'] : []);
   if (bytes < 3000) problems.push({ id: w.id, msg: `截图只有 ${bytes} 字节，可能白屏` });
   bad.slice(0, 3).forEach(l => problems.push({ id: w.id, msg: l.trim().slice(0, 220) }));
   const flag = bytes >= 3000 && !bad.length ? '✓' : '✗';
