@@ -1,9 +1,21 @@
-# 本地工具产物，不进仓库
+# ---------- 临时与工具产物 ----------
 .tmp/
+tmp-*/
+tmp-*.js
+tmp-*.mjs
+tmp-*.txt
+*.pid
+*.log
 node_modules/
 .DS_Store
 Thumbs.db
-*.log
 
-# tools/shoot.mjs 的临时探针脚本
-tools/_probe.mjs
+# 组件作者自查用的临时脚本（不入库）
+tools/_*
+linecheck.mjs
+vague.mjs
+
+# ---------- 允许入库的截图 ----------
+# assets/shots/ 是主页卡片缩略图，属于交付物；
+# 但 _ 前缀的是本地调试大图，不入库
+assets/shots/_*.png
