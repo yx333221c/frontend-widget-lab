@@ -1,0 +1,492 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>可搜索下拉 · Widget Lab</title>
+<style>
+  /* ============ 画布 ============ */
+  :root {
+    --bg: #0e1119;
+    --ink: #e9edf6;
+    --accent: #35d18e;
+  }
+  * { box-sizing: border-box; }
+  html { overflow: hidden; }   /* iframe 内不留内部滚动条 */
+  body {
+    margin: 0; padding: 22px 20px;
+    background:
+      radial-gradient(120% 90% at 12% -10%, #14302a 0%, transparent 60%),
+      radial-gradient(100% 80% at 100% 110%, #1a2338 0%, transparent 55%),
+      var(--bg);
+    color: var(--ink);
+    font: 14px/1.6 system-ui, "PingFang SC", "Microsoft YaHei", sans-serif;
+  }
+  h2 { margin: 0 0 2px; font-size: 15px; letter-spacing: -.2px; }
+  p.note { margin: 0 0 12px; color: #8695b4; font-size: 12.5px; }
+
+  /* ============ Combobox 外壳 ============ */
+  .combo { position: relative; max-width: 420px; }
+  /* 已选 chip 放在输入框上方：弹窗向下长，两者永远不会重叠 */
+  .tags { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; min-height: 22px; }
+  .tags[hidden] { display: none; }
+  /* .slot 预留弹窗的最大高度（top 38 + max-height 132 + 2 边框 = 172），
+     绝对定位的列表于是只会压在这段空白上，不会盖住下面的读数与控制面板 */
+  .slot { position: relative; min-height: 174px; }
+  .row { display: flex; gap: 6px; }
+  .box {
+    flex: 1 1 auto; min-width: 0;
+    display: flex; align-items: center; gap: 6px;
+    padding: 0 8px 0 10px; height: 34px;
+    border-radius: 10px;
+    background: rgba(255, 255, 255, .04);
+    border: 1px solid rgba(255, 255, 255, .14);
+    transition: border-color .18s, background .18s;
+  }
+  .box:focus-within { border-color: var(--accent); background: rgba(53, 209, 142, .06); }
+  .glyph { flex: none; color: #8695b4; font-size: 12px; }
+
+  #q {
+    flex: 1 1 auto; min-width: 0; height: 100%;
+    border: 0; background: transparent; color: var(--ink); outline: none;
+    font: 13.5px/1.4 system-ui, "PingFang SC", sans-serif;
+  }
+  #q::placeholder { color: #6c7893; }
+  #q:disabled { color: #8695b4; }
+
+  /* 触发按钮：APG 里它不进 Tab 序列，输入框已经是可聚焦的那一个 */
+  #btn {
+    flex: none; width: 26px; height: 22px; padding: 0;
+    border: 1px solid rgba(255, 255, 255, .16); border-radius: 7px;
+    background: rgba(255, 255, 255, .06); color: #a9b6d1;
+    font: 11px/1 system-ui; cursor: pointer;
+    transition: background .18s, color .18s;
+  }
+  #btn:hover { background: rgba(255, 255, 255, .12); color: var(--ink); }
+  #btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  /* ============ 弹窗 ============ */
+  #pop {
+    position: absolute; left: 0; right: 0; top: 38px; z-index: 20;
+    margin: 0; padding: 4px; list-style: none;
+    max-height: 132px; overflow-y: auto; overscroll-behavior: contain;
+    border-radius: 10px;
+    background: rgba(16, 22, 28, .97);
+    border: 1px solid rgba(255, 255, 255, .12);
+    box-shadow: 0 10px 26px rgba(0, 0, 0, .55);
+  }
+  #pop[hidden] { display: none; }
+  .opt {
+    display: flex; align-items: baseline; gap: 8px;
+    padding: 5px 8px; border-radius: 7px;
+    font-size: 13px; line-height: 1.4;
+    /* 列表长时的第二道省刀：离屏的行不渲染内部，只留一个高度 */
+    content-visibility: auto; contain-intrinsic-size: 28px;
+  }
+  .opt .nm { color: var(--ink); font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-size: 12.5px; }
+  .opt .cn { color: #8695b4; font-size: 12px; }
+  .opt .py { margin-left: auto; color: #5f6c85; font-size: 11px; letter-spacing: .5px; }
+  .opt mark { background: transparent; color: var(--accent); font-weight: 700; }
+  .opt[aria-selected="true"], .opt:hover { background: rgba(53, 209, 142, .16); }
+  .opt.picked { opacity: .45; }
+  .opt .tick { color: var(--accent); }
+  .empty {
+    position: absolute; left: 0; right: 0; top: 38px; z-index: 19;
+    padding: 8px 10px; border-radius: 10px;
+    background: rgba(16, 22, 28, .97);
+    border: 1px solid rgba(255, 255, 255, .12);
+    color: #8695b4; font-size: 12.5px;
+  }
+  .empty[hidden] { display: none; }
+  .empty b { color: #ffb4c8; font-weight: 650; }
+
+  /* ============ 已选 tag（多选模式） ============ */
+  .tag {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 2px 4px 2px 8px; border-radius: 999px;
+    background: rgba(53, 209, 142, .14); border: 1px solid rgba(53, 209, 142, .4);
+    color: #cff3e2; font: 11.5px/1.5 ui-monospace, Consolas, monospace;
+  }
+  .tag button {
+    width: 16px; height: 16px; padding: 0; border: 0; border-radius: 50%;
+    background: rgba(255, 255, 255, .1); color: #cff3e2;
+    font: 11px/1 system-ui; cursor: pointer;
+    transition: background .18s;
+  }
+  .tag button:hover { background: rgba(255, 255, 255, .25); }
+  .tag button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+  .live { margin: 8px 0 0; font-size: 12px; color: #8695b4; min-height: 18px; }
+
+  /* ============ 控制面板 ============ */
+  .panel {
+    display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center;
+    margin-top: 10px; padding: 7px 12px; border-radius: 12px;
+    background: rgba(255, 255, 255, .04); border: 1px solid rgba(255, 255, 255, .1);
+    font-size: 12.5px; color: #a9b6d1;
+  }
+  .panel > span, .panel > label {
+    display: inline-flex; align-items: center; gap: 7px; white-space: nowrap;
+  }
+  .panel .chk { cursor: pointer; }
+  .panel input[type="checkbox"] { accent-color: var(--accent); }
+  .seg { display: inline-flex; gap: 2px; padding: 2px; border-radius: 9px; background: rgba(255, 255, 255, .05); }
+  .seg input { position: absolute; width: 1px; height: 1px; opacity: 0; margin: 0; }
+  .seg label {
+    padding: 2px 9px; border-radius: 7px; cursor: pointer;
+    font: 600 12px/1.5 system-ui; color: #93a1bd;
+    transition: background .2s, color .2s;
+  }
+  .seg label:hover { color: var(--ink); }
+  .seg input:checked + label { background: var(--accent); color: #062a1c; }
+  .seg input:focus-visible + label { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .box, #btn, .tag button, .seg label, #pop { transition: none; }
+  }
+</style>
+</head>
+<body>
+  <h2>可搜索下拉 Searchable Select</h2>
+  <p class="note">打字即过滤，支持中文名与拼音首字母（<code>bl</code> 命中 <code>blur</code>）；焦点始终留在输入框里。</p>
+
+  <div class="combo" id="combo">
+    <div class="tags" id="tags" hidden></div>
+    <div class="slot">
+      <div class="row">
+        <div class="box">
+          <span class="glyph" aria-hidden="true">⌕</span>
+          <input id="q" type="text" role="combobox" autocomplete="off" spellcheck="false"
+                 aria-controls="pop" aria-expanded="false" aria-autocomplete="list"
+                 aria-label="搜索前端技术" placeholder="技术名 / 中文名 / 首字母">
+        </div>
+        <button id="btn" type="button" tabindex="-1" aria-haspopup="listbox" aria-expanded="false" aria-controls="pop" aria-label="展开候选列表">▾</button>
+      </div>
+
+      <ul id="pop" role="listbox" aria-label="候选列表" hidden></ul>
+      <!-- 空态是 listbox 的兄弟节点：listbox 的子节点只能是 option -->
+      <div class="empty" id="none" aria-hidden="true" hidden></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <label class="chk"><input type="checkbox" id="cMulti"> 多选（tag 模式）</label>
+    <label class="chk"><input type="checkbox" id="cEmpty" checked> 显示无结果空态</label>
+    <span>结果上限</span>
+    <span class="seg">
+      <input type="radio" name="cap" id="cap6" value="6" aria-label="结果上限 6 条"><label for="cap6">6</label>
+      <input type="radio" name="cap" id="cap12" value="12" checked aria-label="结果上限 12 条"><label for="cap12">12</label>
+      <input type="radio" name="cap" id="cap20" value="20" aria-label="结果上限 20 条"><label for="cap20">20</label>
+    </span>
+  </div>
+  <!-- 播报行放在面板之后：多选长出一行 tag 时，总高度仍留在注册表 viewport 内 -->
+  <p class="live" id="live" role="status" aria-live="polite">共 24 个候选。</p>
+
+<script>
+(function () {
+  'use strict';
+
+  /* ---------------- 数据：name / 中文别名 / 别名拼音首字母 ---------------- */
+  var DATA = [
+    ['blur', '模糊', 'mh'],
+    ['backdrop-filter', '背景滤镜', 'bjlj'],
+    ['clip-path', '裁切路径', 'cqlj'],
+    ['conic-gradient', '锥形渐变', 'zxjb'],
+    ['content-visibility', '内容可见性', 'nrkjx'],
+    ['will-change', '提层', 'tc'],
+    ['requestAnimationFrame', '逐帧回调', 'zzhd'],
+    ['IntersectionObserver', '交叉观察', 'jcgc'],
+    ['MutationObserver', '变更观察', 'bggc'],
+    ['ResizeObserver', '尺寸观察', 'ccgc'],
+    ['pointer-events', '指针事件', 'zzsj'],
+    ['scroll-snap', '滚动吸附', 'gdxf'],
+    ['container-query', '容器查询', 'rqcx'],
+    ['aspect-ratio', '宽高比', 'kgb'],
+    ['mask-image', '遮罩图', 'zzt'],
+    ['mix-blend-mode', '混合模式', 'hhms'],
+    ['filter', '滤镜', 'lj'],
+    ['transform', '变换', 'bh'],
+    ['grid-template', '网格模板', 'wgmb'],
+    [':focus-visible', '焦点可见', 'jdkj'],
+    ['prefers-reduced-motion', '减少动效', 'jsdx'],
+    ['aria-live', '实况区域', 'skqy'],
+    ['autocomplete', '自动填充', 'zdtc'],
+    ['web-share', '系统分享', 'xtfx']
+  ].map(function (r) {
+    return { name: r[0], cn: r[1], py: r[2], key: r[0].toLowerCase(), picked: false };
+  });
+
+  var q = document.getElementById('q');
+  var btn = document.getElementById('btn');
+  var pop = document.getElementById('pop');
+  var none = document.getElementById('none');
+  var combo = document.getElementById('combo');
+  var tags = document.getElementById('tags');
+  var live = document.getElementById('live');
+
+  var CAP = 12, showEmpty = true, multi = false;
+  var hits = [], act = -1, open = false, composing = false, raf = null, sel = null;
+
+  function esc(s) {
+    return String(s).replace(/[&<>"]/g, function (m) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[m];
+    });
+  }
+
+  /* ---------------- 子序列打分：连续加分 + 首字符加分 ---------------- */
+  function subseq(hay, needle) {
+    var pos = [], j = 0, i = 0, bonus = 0, run = 0;
+    while (i < hay.length && j < needle.length) {
+      if (hay.charAt(i) === needle.charAt(j)) {
+        /* 紧挨着上一个命中就续上连击，否则重开 */
+        run = (j > 0 && pos[j - 1] === i - 1) ? run + 1 : 1;
+        bonus += run;
+        pos.push(i); j++;
+      } else { run = 0; }
+      i++;
+    }
+    if (j < needle.length) return null;              // 连子序列都凑不齐
+    return { score: needle.length + bonus + (pos[0] === 0 ? needle.length * 2 : 0), pos: pos };
+  }
+  function score(item, n) {
+    if (!n) return { item: item, m: { score: 0, pos: [] }, field: 'key' };
+    var a = subseq(item.key, n), b = subseq(item.cn, n), c = subseq(item.py, n);
+    var best = { f: 'key', r: a }, x = b;
+    if (x && (!best.r || x.score + 0.5 > best.r.score)) best = { f: 'cn', r: x };
+    x = c;
+    if (x && (!best.r || x.score > best.r.score)) best = { f: 'py', r: x };
+    if (!best.r) return null;
+    return { item: item, m: best.r, field: best.f };
+  }
+
+  function markUp(text, pos) {
+    var set = {}, i;
+    for (i = 0; i < pos.length; i++) set[pos[i]] = 1;
+    var out = '';
+    for (i = 0; i < text.length; i++) {
+      out += set[i] ? '<mark>' + esc(text.charAt(i)) + '</mark>' : esc(text.charAt(i));
+    }
+    return out;
+  }
+
+  /* ---------------- 渲染（一帧一次） ---------------- */
+  function schedule() {
+    if (raf) return;
+    /* 一次 input 事件可能连着触发过滤、滚动、计数播报；合到一帧里只写一次 DOM */
+    raf = requestAnimationFrame(function () { raf = null; render(); });
+  }
+
+  function render() {
+    if (!open) { pop.innerHTML = ''; none.hidden = true; return; }
+    var n = q.value.trim().toLowerCase();
+    var list = [];
+    for (var i = 0; i < DATA.length; i++) {
+      var s = score(DATA[i], n);
+      if (s) list.push(s);
+    }
+    list.sort(function (a, b) { return b.m.score - a.m.score; });
+    /* 上限只作用于"搜索结果"：空输入时把 24 条全列出来，否则光靠浏览看不到后半截 */
+    var lim = n ? CAP : DATA.length;
+    var capped = list.length > lim;
+    hits = list.slice(0, lim);
+    if (act >= hits.length) act = hits.length - 1;     // 上限调小之后旧的高亮位会越界
+
+    var html = '';
+    for (var k = 0; k < hits.length; k++) {
+      var it = hits[k].item, m = hits[k].m;
+      var nm = hits[k].field === 'key' ? markUp(it.name, m.pos) : esc(it.name);
+      var cn = hits[k].field === 'cn' ? markUp(it.cn, m.pos) : esc(it.cn);
+      html += '<li class="opt' + (it.picked ? ' picked' : '') + '" role="option" id="o' + k + '"' +
+              ' aria-selected="' + (k === act ? 'true' : 'false') + '">' +
+              (it.picked ? '<span class="tick" aria-hidden="true">✓</span>' : '') +
+              '<span class="nm">' + nm + '</span><span class="cn">' + cn + '</span>' +
+              '<span class="py">' + esc(it.py) + '</span></li>';
+    }
+    pop.innerHTML = html;
+    /* 空态不能当 listbox 的子节点：role=listbox 里只允许 role=option，
+       读屏器会把那行文字念成"选项"，还会多算一项。所以它是弹窗的兄弟节点。 */
+    none.hidden = !(!hits.length && showEmpty);
+    none.innerHTML = '<b>没有匹配「' + esc(q.value) + '」的项</b>，换个说法或清空重来。';
+    pop.hidden = !hits.length;
+
+    /* 计数交给 live region，不进 listbox */
+    live.textContent = hits.length
+      ? '匹配 ' + hits.length + ' 项' + (capped ? '（已达上限 ' + CAP + '，共 ' + list.length + ' 项）' : '') + '，上下键选择，回车确认。'
+      : '没有匹配项。';
+    q.setAttribute('aria-expanded', 'true');
+    btn.setAttribute('aria-expanded', 'true');
+    if (act >= 0 && hits.length) q.setAttribute('aria-activedescendant', 'o' + act);
+    else q.removeAttribute('aria-activedescendant');
+  }
+
+  /* ---------------- 开合 ---------------- */
+  function openPop() {
+    open = true; act = -1;
+    render();
+  }
+  function closePop() {
+    open = false; act = -1;
+    pop.hidden = true;
+    none.hidden = true;
+    q.setAttribute('aria-expanded', 'false');
+    q.removeAttribute('aria-activedescendant');
+    btn.setAttribute('aria-expanded', 'false');
+    /* 单选：焦点离开时不要把用户已经选定的值抹掉，回退到选中项 */
+    if (!multi) q.value = sel ? sel.name : '';
+    render();
+    live.textContent = '已收起，共 ' + DATA.length + ' 个候选。';
+  }
+
+  function jump(first) {
+    if (!hits.length) return;
+    open = true;
+    act = first ? 0 : hits.length - 1;
+    render();
+    var el = pop.children[act];
+    if (el && el.scrollIntoView) el.scrollIntoView({ block: 'nearest' });
+  }
+
+  function move(d) {
+    if (!hits.length) return;
+    open = true;
+    act = d > 0
+      ? Math.min(hits.length - 1, act + 1)
+      : Math.max(0, (act < 0 ? hits.length : act) - 1);
+    render();
+    /* nearest 只在行超出可视区时挪最小距离；center 每按一次都把行搬到中间，看起来一直在滚 */
+    var el = pop.children[act];
+    if (el && el.scrollIntoView) el.scrollIntoView({ block: 'nearest' });
+  }
+
+  function pick(i) {
+    var hit = hits[i == null ? act : i];
+    if (!hit) return;
+    var it = hit.item;
+    if (multi) {
+      /* 已选过就不再重复加 tag，只给一次播报，免得列表里长出两颗一样的 */
+      if (it.picked) { live.textContent = it.cn + ' 已经在已选里了。'; return; }
+      it.picked = true;
+      addTag(it);
+      q.value = ''; act = -1; render();
+      live.textContent = '已加入 ' + it.cn + '，还能继续搜。';
+    } else {
+      if (sel && sel !== it) sel.picked = false;      // 单选只有一行该压暗，旧的 picked 要还回去
+      sel = it;
+      it.picked = true;
+      q.value = it.name;
+      closePop();
+      live.textContent = '已选择 ' + it.cn + '（' + it.name + '）。';
+    }
+  }
+
+  /* ---------------- 多选 tag：每颗是带真 button 的 chip ---------------- */
+  function addTag(it) {
+    var chip = document.createElement('span');
+    chip.className = 'tag';
+    chip.innerHTML = esc(it.name) +
+      '<button type="button" aria-label="移除 ' + esc(it.name) + '">×</button>';
+    chip.querySelector('button').addEventListener('click', function () {
+      it.picked = false;
+      tags.removeChild(chip);
+      if (!tags.children.length) tags.hidden = true;
+      q.focus();
+      render();
+      live.textContent = '已移除 ' + it.cn + '。';
+    });
+    tags.appendChild(chip);
+    tags.hidden = false;
+  }
+
+  /* ---------------- 键盘：只在必须接管的方向上 preventDefault ---------------- */
+  q.addEventListener('keydown', function (e) {
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault(); move(e.key === 'ArrowDown' ? 1 : -1);      // 没开时也先开
+    } else if (e.key === 'Home' || e.key === 'End') {
+      if (open && hits.length) {
+        e.preventDefault();                                          // 否则 Home/End 归输入框光标
+        jump(e.key === 'Home');
+      }
+    } else if (e.key === 'Enter') {
+      if (open && hits.length) { e.preventDefault(); pick(act < 0 ? 0 : act); }
+    } else if (e.key === 'Escape') {
+      if (open) { e.preventDefault(); closePop(); }
+      else if (q.value) { e.preventDefault(); q.value = ''; act = -1; render(); }
+    } else if (e.key === 'Backspace' && !q.value && multi && tags.children.length) {
+      e.preventDefault();                             // 空输入退格删掉最后一颗 tag
+      tags.children[tags.children.length - 1].querySelector('button').click();
+    } else if (e.key === 'Tab' && open) {
+      closePop();                                     // 不拦：焦点本来就该走
+    }
+    /* 字母数字键一律不拦：输入法组合、光标移动、选区都归浏览器 */
+  });
+
+  q.addEventListener('input', function (e) {
+    if (composing || (e && e.isComposing)) return;    // 拼音打字过程中不重新过滤
+    act = -1; open = true; schedule();
+  });
+  /* 组合输入：中文候选窗还开着就什么都不做，落词后再过滤 */
+  q.addEventListener('compositionstart', function () { composing = true; });
+  q.addEventListener('compositionend', function () { composing = false; act = -1; open = true; schedule(); });
+
+  btn.addEventListener('click', function () {
+    if (open) closePop(); else { openPop(); q.focus(); }
+  });
+
+  /* 点行选中。用 pointerdown 是因为 blur 会先于 click 到来，等到 click 时弹窗已经关了 */
+  var handled = false;
+  pop.addEventListener('pointerdown', function (e) {
+    var row = e.target.closest ? e.target.closest('.opt') : null;
+    if (!row) return;
+    e.preventDefault();                               // 保住输入框的焦点
+    handled = true;                                   // 交给下面的 document 处理器跳过
+    act = parseInt(row.id.slice(1), 10);
+    pick(act);
+  });
+
+  /* 点控件以外收起 */
+  document.addEventListener('pointerdown', function (e) {
+    /* 刚在 pop 里选过就必须直接返回：pick() 里的 render() 已经重建了 innerHTML，
+       e.target 那一刻是脱离文档树的节点，combo.contains() 会返回 false 而误判成"点外面"。
+       症状：多选模式下点一行，tag 加上了但弹窗同时被关掉。 */
+    if (handled) { handled = false; return; }
+    if (open && !combo.contains(e.target)) closePop();
+  });
+
+  /* ---------------- 焦点离开整套控件才收起 ---------------- */
+  q.addEventListener('focus', function () { if (!open) openPop(); });
+  combo.addEventListener('focusout', function (e) {
+    if (!open) return;
+    /* relatedTarget 是焦点要去的那个元素。还在 combo 里就不收；
+       为 null 说明焦点跳到了页面外（地址栏、或纯点击），交给 pointerdown 处理。
+       自己写 focusin 轮询做"焦点陷阱"是多余的：浏览器已经告诉你焦点去哪了。 */
+    if (e.relatedTarget && !combo.contains(e.relatedTarget)) closePop();
+  });
+
+  /* ---------------- 控制面板 ---------------- */
+  document.getElementById('cMulti').addEventListener('change', function () {
+    multi = this.checked;
+    q.value = ''; act = -1; sel = null;
+    DATA.forEach(function (d) { d.picked = false; });
+    tags.innerHTML = '';
+    tags.hidden = !multi;
+    /* 多选要让读屏器知道这不是"选一个就完事"的 listbox */
+    if (multi) pop.setAttribute('aria-multiselectable', 'true');
+    else pop.removeAttribute('aria-multiselectable');
+    open = true;
+    render();
+    live.textContent = multi ? '多选模式：回车或点击累加，退格删掉最后一颗。' : '单选模式：选中即回填并收起。';
+  });
+  document.getElementById('cEmpty').addEventListener('change', function () {
+    showEmpty = this.checked; render();
+  });
+  ['cap6', 'cap12', 'cap20'].forEach(function (id) {
+    document.getElementById(id).addEventListener('change', function () {
+      CAP = parseInt(this.value, 10); render();
+    });
+  });
+
+  render();
+})();
+</script>
+</body>
+</html>

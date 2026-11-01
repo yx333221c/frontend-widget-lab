@@ -1,0 +1,20 @@
+{
+  "id": "spotlight-card",
+  "what": "指针在卡片内滑动时，内部高光与边缘描边实时跟随指针位置。做法是把指针坐标写成「卡片自己的」CSS 变量，让 radial-gradient 自己重新求值，而不是用 JS 挪一个绝对定位的圆点。移出卡片后高光淡出，不留残影。",
+  "points": [
+    { "k": "变量声明在元素自身", "v": "--mx/--my 每卡片一份，挂到 :root 会让一排卡片共用同一组坐标" },
+    { "k": "radial-gradient(circle R at X Y)", "v": "显式半径写法，让滑块上的数字等于真实像素半径" },
+    { "k": "padding + 双层 mask + exclude", "v": "满铺渐变用 content-box / border-box 两层遮罩做差集，剩下的就是 1px 流光描边" },
+    { "k": "前缀现实", "v": "-webkit-mask-composite 只认 xor，且必须写在 mask 简写之后，否则被重置" },
+    { "k": "rect 标脏重算", "v": "getBoundingClientRect 是同步布局读取，只在滚动/缩放后量一次" },
+    { "k": "写入收进一帧", "v": "pointermove 只记坐标，setProperty 交给 requestAnimationFrame，静止即无排帧" }
+  ],
+  "tryIt": [
+    "在三张卡片之间来回划动，看高光是否只在当前这张上",
+    "把半径拉到 300px，观察三张卡片的高光糊成一片",
+    "取消「流动描边」，对比只有内部高光时边缘是不是立刻变廉价",
+    "取消「第三张 hover 才淡入」，然后把指针移出第三张，看光斑卡在角落不消失"
+  ],
+  "trap": "把 --mx/--my 用 document.documentElement.style.setProperty 写到 :root，症状是一排卡片的高光全在同一处、移开鼠标后还有残留。原因是自定义属性按继承共享，多元素共用了一组数。修法：变量默认值声明在元素自己的规则里，JS 只写当前元素的 style。",
+  "suite": "适合定价页、功能网格、文档卡片墙、导航项。不适合长列表和正文阅读区（图层数量与文字可读性都会出问题），已有复杂背景的卡片需要重排伪元素层级。"
+}

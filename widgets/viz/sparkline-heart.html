@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>心跳迷你折线 · Widget Lab</title>
+<style>
+  :root {
+    --bg: #0e1119;
+    --ink: #e9edf6;
+    --sub: #8695b4;
+    --accent: #ff5f9e;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 22px 20px;
+    background:
+      radial-gradient(120% 90% at 8% -20%, #2a1626 0%, transparent 60%),
+      radial-gradient(90% 80% at 100% 120%, #16233a 0%, transparent 55%),
+      var(--bg);
+    color: var(--ink);
+    font: 14px/1.6 system-ui, "PingFang SC", "Microsoft YaHei", sans-serif;
+    overflow-x: hidden;
+  }
+  h2 { margin: 0 0 2px; font-size: 15px; letter-spacing: -.2px; }
+  p.note { margin: 0 0 7px; color: var(--sub); font-size: 12px; }
+  code { font: 11.5px ui-monospace, Consolas, monospace; color: #b8c6e6; }
+
+  .stage {
+    position: relative; border-radius: 12px; overflow: hidden;
+    background: rgba(255, 255, 255, .04); border: 1px solid rgba(255, 255, 255, .1);
+  }
+  canvas { display: block; width: 100%; height: 62px; }
+
+  .bpm {
+    position: absolute; right: 9px; top: 4px; text-align: right; line-height: 1.1;
+    font-variant-numeric: tabular-nums; pointer-events: none;
+  }
+  .bpm b { font-size: 17px; font-weight: 700; color: var(--accent); }
+  .bpm span { display: block; font-size: 8px; color: var(--sub); letter-spacing: .5px; }
+  .bpm i { font-style: normal; font-size: 9px; color: #6c7893; }
+
+  .panel {
+    display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: center;
+    margin-top: 7px; padding: 6px 10px; border-radius: 11px;
+    background: rgba(255, 255, 255, .04); border: 1px solid rgba(255, 255, 255, .1);
+    font-size: 11.5px; color: #a9b6d1;
+  }
+  .panel label { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+  .panel input[type="range"] { width: 68px; accent-color: var(--accent); }
+  .panel output { font-variant-numeric: tabular-nums; color: var(--ink); min-width: 28px; }
+  .btn {
+    font: 600 11.5px/1 system-ui, sans-serif; color: var(--ink);
+    padding: 6px 10px; border-radius: 9px; cursor: pointer;
+    background: rgba(255, 255, 255, .07); border: 1px solid rgba(255, 255, 255, .14);
+    transition: background .2s, border-color .2s, transform .1s;
+  }
+  .btn:hover { background: rgba(255, 95, 158, .22); border-color: rgba(255, 95, 158, .6); }
+  .btn:active { transform: translateY(1px); }
+  .btn.primary { background: rgba(255, 95, 158, .28); border-color: rgba(255, 95, 158, .65); }
+  .tip { margin: 6px 0 0; color: #6c7893; font-size: 11px; }
+</style>
+</head>
+<body>
+  <h2>心跳迷你折线 Sparkline Heart Monitor</h2>
+  <p class="note">数据：一条模拟心电，纵轴单位 mV（标了 ±0.5 与 0）。波形由分段函数拼出 PQRST，每 8~14 拍偶发一次早搏。</p>
+
+  <div class="stage">
+    <canvas id="ecg" role="img" aria-label="模拟心电波形，逐帧向左推进，右上角显示心率"></canvas>
+    <div class="bpm"><b id="bpm">--</b><span>BPM</span><i id="pvc">早搏 0</i></div>
+  </div>
+
+  <div class="panel">
+    <button class="btn primary" id="bPause" aria-label="暂停或继续扫描">⏸ 暂停</button>
+    <button class="btn" id="bPvc" aria-label="注入一次早搏">⚡ 注入早搏</button>
+    <label>扫描速度
+      <input type="range" id="sSpeed" min="0.4" max="2.5" step="0.1" value="1" aria-label="扫描速度">
+      <output id="oSpeed">1.0×</output>
+    </label>
+    <label>尾迹
+      <input type="range" id="sFade" min="0.6" max="3.5" step="0.1" value="1.8" aria-label="尾迹衰减指数">
+      <output id="oFade">1.8</output>
+    </label>
+  </div>
+  <p class="tip">尾迹是每个点按年龄自己算 alpha，不是"盖一层半透明矩形"；暂停时 <code>rAF</code> 真的停了。</p>
+
+<script>
+(function () {
+  'use strict';
+
+  var cv = document.getElementById('ecg');
+  var ctx = cv.getContext('2d');
+  var REDUCE = window.matchMedia &&
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  var STEP = 1.4;        // 每个样本占多少 CSS 像素
+  var CAP = 1400;        // 环形缓冲容量（样本数）
+  var B = 14;            // 尾迹分几个亮度桶
+
+  /* ============ 1. DPR：CSS 尺寸与位图尺寸分开管 ============ */
+  var W = 0, H = 0, visible = 400;
+  function resize() {
+    var dpr = Math.min(window.devicePixelRatio || 1, 2);
+    W = cv.clientWidth; H = cv.clientHeight;
+    cv.width = Math.round(W * dpr);
+    cv.height = Math.round(H * dpr);
+    /* 之后所有绘制都用 CSS 像素坐标，缩放交给这一行 */
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+    visible = Math.max(60, Math.min(CAP, Math.ceil(W / STEP)));
+  }
+
+  /* ============ 2. 环形缓冲：容量与可视窗口是两件事 ============ */
+  var buf = new Float32Array(CAP);
+  var flag = new Uint8Array(CAP);      // 1 = 这个样本属于早搏
+  var head = 0, count = 0;
+
+  function push(v, f) {
+    buf[head] = v; flag[head] = f;
+    head = (head + 1) % CAP;
+    if (count < CAP) count++;
+  }
+  function slot(i) { return (head - count + i + CAP * 2) % CAP; }
+  function at(i) { return buf[slot(i)]; }
+  function isPvcAt(i) { return flag[slot(i)] === 1; }
+
+  /* ============ 3. 波形：分段函数，不是正弦波 ============ */
+  var BASE_BPM = 72;
+  var speed = 1, fadeK = 1.8;
+  var beat = { kind: 'sin', len: 1, t: 0 };
+  var spb = 200;                       // 一拍多少个样本，随扫描速度变
+  var pvcCount = 0, nextRandom = 9, sinceBeat = 0;
+  var nowT = 0, lastBeatT = 0, prevBeatT = 0;
+  var targetBpm = BASE_BPM, bpmShown = BASE_BPM;
+
+  function bump(t, c, w) {             // 以 c 为中心、半宽 w 的半正弦
+    var x = Math.abs(t - c) / w;
+    return x >= 1 ? 0 : Math.sin((1 - x) * Math.PI / 2);
+  }
+  function sinWave(t) {                // 正常 PQRST，t ∈ [0,1)
+    var v = 0.16 * bump(t, 0.160, 0.070);      // P 波
+    v -= 0.13 * bump(t, 0.262, 0.016);         // Q
+    v += 1.00 * bump(t, 0.285, 0.014);         // R：尖峰
+    v -= 0.26 * bump(t, 0.310, 0.022);         // S
+    v += 0.30 * bump(t, 0.500, 0.085);         // T 波
+    return v;
+  }
+  function pvcWave(t) {                // 早搏：宽大且方向相反的畸形 QRS + 继发性 T 波
+    return -0.72 * bump(t, 0.34, 0.20) + 0.42 * bump(t, 0.66, 0.24);
+  }
+  function samplesPerSec() { return 120 * speed; }
+  function resample() { spb = (60 / BASE_BPM) * samplesPerSec(); }
+
+  function stepSample() {
+    beat.t += 1 / (spb * beat.len);
+    if (beat.t >= 1) {                        // 这一拍结束，决定下一拍
+      beat.t -= 1;
+      sinceBeat++;
+      if (beat.kind === 'pvc') {
+        beat.kind = 'pause'; beat.len = 0.85; // 代偿间歇：早搏后空一拍
+      } else {
+        if (beat.kind === 'sin') {
+          lastBeatT = nowT;
+          targetBpm = 60 / Math.max(0.2, lastBeatT - prevBeatT);
+          prevBeatT = lastBeatT;
+        }
+        if (sinceBeat >= nextRandom) {
+          sinceBeat = 0; nextRandom = 8 + Math.floor(Math.random() * 7);
+          beat.kind = 'pvc'; beat.len = 0.42; pvcCount++;
+        } else {
+          beat.kind = 'sin'; beat.len = 1;
+        }
+      }
+    }
+    var v = beat.kind === 'pvc' ? pvcWave(beat.t)
+          : beat.kind === 'pause' ? 0 : sinWave(beat.t);
+    push(v, beat.kind === 'pvc' ? 1 : 0);
+    nowT += 1 / samplesPerSec();              // 累计真实经过的秒数
+  }
+
+  /* ============ 4. 绘制 ============ */
+  var MID = 0, MV = 0;                  // 基线 y、每 mV 对应多少像素
+  function px(i) { return W - (visible - 1 - i) * STEP; }
+  function py(v) { return MID - v * MV; }
+
+  function draw() {
+    var padL = W > 420 ? 24 : 0;        // 窄屏放不下纵轴数字，只留网格
+    MID = H * 0.48; MV = H * 0.36;
+    ctx.clearRect(0, 0, W, H);
+    var start = count - visible;
+
+    /* 4.1 细网格 */
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = 'rgba(255,255,255,.05)';
+    ctx.beginPath();
+    for (var gx = 0; gx <= W; gx += 26) { ctx.moveTo(gx + .5, 0); ctx.lineTo(gx + .5, H); }
+    for (var gy = 0; gy <= H; gy += 26) { ctx.moveTo(0, gy + .5); ctx.lineTo(W, gy + .5); }
+    ctx.stroke();
+
+    /* 4.2 纵轴刻度：让这张图看得出在量什么 */
+    ctx.strokeStyle = 'rgba(255,255,255,.13)';
+    ctx.fillStyle = '#6c7893';
+    ctx.font = '9px ui-monospace, Consolas, monospace';
+    ctx.textBaseline = 'middle';
+    ctx.beginPath();
+    [[0.5, '+0.5'], [0, ' 0.0'], [-0.5, '-0.5']].forEach(function (p) {
+      var y = Math.round(MID - p[0] * MV) + .5;
+      ctx.moveTo(24, y); ctx.lineTo(W, y);
+      ctx.fillText(p[1], 2, y);
+    });
+    ctx.stroke();
+
+    /* 4.3 尾迹：按年龄算 alpha，分桶后一次 stroke，
+       省掉"每个点 beginPath+stroke"的几百次状态切换 */
+    var prevB = -1;
+    for (var i = 1; i < visible; i++) {
+      var age = (visible - 1 - i) / visible;          // 0 = 最新
+      var a = Math.pow(1 - age, fadeK);
+      var b = Math.min(B - 1, Math.floor(a * B));
+      if (b !== prevB) {
+        if (prevB >= 0) ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(px(i - 1), py(at(start + i - 1)));  // 与上一桶共用一个点，接缝不断
+        ctx.strokeStyle = 'rgba(255,95,158,' + ((b + .5) / B).toFixed(2) + ')';
+        ctx.lineWidth = 1 + 1.2 * ((b + .5) / B);
+        prevB = b;
+      }
+      ctx.lineTo(px(i), py(at(start + i)));
+    }
+    if (prevB >= 0) ctx.stroke();
+
+    /* 4.4 早搏那一段单独描成琥珀色，盖在尾迹上 */
+    ctx.strokeStyle = '#f7b955'; ctx.lineWidth = 1.8;
+    ctx.beginPath();
+    var run = false;
+    for (var j = 1; j < visible; j++) {
+      if (isPvcAt(start + j)) {
+        if (!run) { ctx.moveTo(px(j - 1), py(at(start + j - 1))); run = true; }
+        ctx.lineTo(px(j), py(at(start + j)));
+      } else if (run) {
+        ctx.lineTo(px(j), py(at(start + j)));
+        ctx.stroke(); ctx.beginPath(); run = false;
+      }
+    }
+    if (run) ctx.stroke();
+
+    /* 4.5 扫描头：最右端一小截亮线 + 光晕 */
+    var HEAD = 9;
+    ctx.strokeStyle = '#ffd7e7'; ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(px(visible - HEAD), py(at(count - HEAD)));
+    for (var k = visible - HEAD + 1; k < visible; k++) ctx.lineTo(px(k), py(at(start + k)));
+    ctx.stroke();
+    var hx = px(visible - 1), hy = py(at(count - 1));
+    ctx.fillStyle = 'rgba(255,95,158,.35)';
+    ctx.beginPath(); ctx.arc(hx, hy, 4.5, 0, 6.2832); ctx.fill();
+    ctx.fillStyle = '#fff';
+    ctx.beginPath(); ctx.arc(hx, hy, 1.8, 0, 6.2832); ctx.fill();
+
+    /* 4.6 横轴比例尺：宽度按当前扫描速度换算，标的是真实时间 */
+    var bar = Math.round(0.5 * samplesPerSec() * STEP);
+    ctx.strokeStyle = 'rgba(255,255,255,.28)'; ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(W - bar - 6, H - 7.5); ctx.lineTo(W - 6, H - 7.5);
+    ctx.moveTo(W - bar - 6, H - 10); ctx.lineTo(W - bar - 6, H - 5);
+    ctx.moveTo(W - 6, H - 10); ctx.lineTo(W - 6, H - 5);
+    ctx.stroke();
+    ctx.fillStyle = '#6c7893'; ctx.textBaseline = 'bottom';
+    ctx.fillText('0.5 s', W - bar - 6, H - 11);
+  }
+
+  /* ============ 5. 主循环：暂停时真的停 ============ */
+  var bpmEl = document.getElementById('bpm'), pvcEl = document.getElementById('pvc');
+  var raf = null, playing = !REDUCE, last = 0, acc = 0;
+
+  function loop(t) {
+    var dt = Math.min(0.05, (t - (last || t)) / 1000); last = t;
+    acc += dt * samplesPerSec();
+    var n = Math.floor(acc); acc -= n;
+    for (var i = 0; i < n; i++) stepSample();
+
+    /* BPM 数字缓动：直接显示会每拍跳一次，读不出趋势 */
+    bpmShown += (targetBpm - bpmShown) * (1 - Math.pow(1 - 0.06, Math.max(1, dt * 60)));
+    bpmEl.textContent = Math.round(bpmShown);
+    pvcEl.textContent = '早搏 ' + pvcCount;
+
+    draw();
+    raf = (playing && !document.hidden) ? requestAnimationFrame(loop) : null;
+  }
+  function kick() { if (!raf) { last = 0; raf = requestAnimationFrame(loop); } }
+
+  var bPause = document.getElementById('bPause');
+  function setPlaying(on) {
+    playing = on;
+    bPause.textContent = on ? '⏸ 暂停' : '▶ 继续';
+    bPause.classList.toggle('primary', on);
+    if (on) kick();
+    else if (raf) { cancelAnimationFrame(raf); raf = null; }
+  }
+  bPause.addEventListener('click', function () { setPlaying(!playing); });
+  document.getElementById('bPvc').addEventListener('click', function () {
+    if (beat.kind === 'pvc') return;
+    beat.kind = 'pvc'; beat.len = 0.42; beat.t = 0; pvcCount++;
+    /* 暂停时也要看到东西：手动推进 40 个样本（约半个畸形 QRS）再画一帧 */
+    if (!playing) { for (var i = 0; i < 40; i++) stepSample(); draw(); }
+  });
+  var sSpeed = document.getElementById('sSpeed'), oSpeed = document.getElementById('oSpeed');
+  sSpeed.addEventListener('input', function () {
+    speed = parseFloat(sSpeed.value);
+    oSpeed.textContent = speed.toFixed(1) + '×';
+    resample();                           // 心跳周期不变，只改每拍样本数
+    if (!playing) draw();
+  });
+  var sFade = document.getElementById('sFade'), oFade = document.getElementById('oFade');
+  sFade.addEventListener('input', function () {
+    fadeK = parseFloat(sFade.value);
+    oFade.textContent = fadeK.toFixed(1);
+    if (!playing) draw();
+  });
+  document.addEventListener('visibilitychange', function () { if (!document.hidden) kick(); });
+  window.addEventListener('resize', function () { resize(); if (!playing) draw(); });
+
+  /* 预热：先跑满一屏，进页面就是一条完整波形，不用等它慢慢扫进来 */
+  resize(); resample();
+  for (var w = 0; w < visible + 60; w++) stepSample();
+  setPlaying(playing);
+  if (!playing) draw();
+})();
+</script>
+</body>
+</html>

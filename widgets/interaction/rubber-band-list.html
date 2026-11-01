@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>橡皮筋回弹列表 · Widget Lab</title>
+<style>
+  /* ============ 画布 ============ */
+  :root {
+    --bg: #0e1119;
+    --ink: #e9edf6;
+    --sub: #8695b4;
+    --accent: #35d18e;
+    --p: 0;                 /* 下拉进度 0~1，驱动提示区 */
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 16px 20px 14px;
+    background:
+      radial-gradient(100% 78% at 6% -14%, #12291f 0%, transparent 58%),
+      radial-gradient(90% 70% at 100% 120%, #14303a 0%, transparent 55%),
+      var(--bg);
+    color: var(--ink);
+    font: 13px/1.55 system-ui, "PingFang SC", "Microsoft YaHei", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  h2 { margin: 0 0 3px; font-size: 15px; letter-spacing: -.2px; }
+  p.note { margin: 0 0 10px; color: var(--sub); font-size: 12.5px; }
+
+  /* ============ 列表 ============ */
+  .frame {
+    border-radius: 14px; overflow: hidden;
+    background: rgba(255, 255, 255, .04);
+    border: 1px solid rgba(255, 255, 255, .1);
+  }
+  .scroller {
+    height: 182px;
+    overflow-y: auto;
+    overscroll-behavior: contain;      /* 滚到边界不把滚动传给外层页面 */
+    scrollbar-width: none;
+    outline: none;
+  }
+  .scroller::-webkit-scrollbar { width: 0; height: 0; }
+  .scroller:focus-visible { box-shadow: inset 0 0 0 1px rgba(53, 209, 142, .55); }
+
+  /* 自己控制的位移层：越界位移只写这一个 transform */
+  .track {
+    transform: translateY(var(--ob, 0px));
+    will-change: transform;
+  }
+  .track.dragging { transition: none; }
+  .track.settle { transition: transform .45s cubic-bezier(.2, .9, .2, 1); }
+
+  /* 顶部下拉提示区：常驻高度 46px，靠负 margin 平时藏在列表上方 */
+  .pull {
+    display: flex; align-items: center; justify-content: center; gap: 8px;
+    height: 46px; margin-top: -46px;
+    font-size: 11.5px; color: var(--sub);
+    opacity: calc(.12 + var(--p) * .88);
+  }
+  .pull .arrow {
+    width: 9px; height: 9px;
+    border-right: 2px solid var(--accent); border-bottom: 2px solid var(--accent);
+    transform: rotate(calc(45deg + var(--p) * 180deg));
+  }
+  .pull .spinner {
+    display: none; width: 12px; height: 12px; border-radius: 50%;
+    border: 2px solid rgba(53, 209, 142, .28); border-top-color: var(--accent);
+  }
+  .track.refreshing .spinner { display: block; animation: spin .8s linear infinite; }
+  .track.refreshing .arrow { display: none; }
+  .track.ready .pull { color: var(--accent); }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .rows { list-style: none; margin: 0; padding: 0; }
+  .item {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 12px; border-bottom: 1px solid rgba(255,255,255,.06);
+  }
+  .item:last-child { border-bottom: 0; }
+  .dot {
+    flex: 0 0 auto; width: 25px; height: 25px; border-radius: 8px;
+    display: grid; place-items: center;
+    font: 600 10.5px/1 ui-monospace, Consolas, monospace; color: #0e1119;
+    background: linear-gradient(135deg, var(--c1, #35d18e), var(--c2, #24d3ee));
+  }
+  .item .txt { min-width: 0; }
+  .item .t1 { display: block; font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .item .t2 { display: block; font-size: 11px; color: var(--sub); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .item .time { margin-left: auto; font: 10.5px/1 ui-monospace, Consolas, monospace; color: #6c7893; }
+
+  .readout {
+    display: flex; gap: 14px; padding: 6px 12px;
+    font: 10.5px/1 ui-monospace, Consolas, monospace; color: #6c7893;
+    background: rgba(0, 0, 0, .25);
+    border-top: 1px solid rgba(255,255,255,.07);
+  }
+  .readout b { color: var(--ink); font-weight: 500; }
+  body.no-num .readout { visibility: hidden; }
+
+  /* ============ 控制面板 ============ */
+  .panel {
+    display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center;
+    margin-top: 10px; padding: 10px 12px; border-radius: 12px;
+    background: rgba(255, 255, 255, .04);
+    border: 1px solid rgba(255, 255, 255, .1);
+    font-size: 11.5px; color: #a9b6d1;
+  }
+  .panel label { display: flex; align-items: center; gap: 6px; white-space: nowrap; cursor: pointer; }
+  .panel input[type="range"] { width: 68px; accent-color: var(--accent); }
+  .panel output { font-variant-numeric: tabular-nums; color: var(--ink); min-width: 26px; }
+  .seg { display: flex; border: 1px solid rgba(255,255,255,.14); border-radius: 9px; overflow: hidden; }
+  .seg button {
+    font: 600 11px/1 system-ui; padding: 7px 8px; cursor: pointer;
+    color: var(--sub); background: rgba(255,255,255,.03); border: 0;
+  }
+  .seg button[aria-pressed="true"] { color: #08130d; background: var(--accent); }
+  .hint { margin: 7px 0 0; color: #6c7893; font-size: 11px; }
+  code { font: 11px ui-monospace, Consolas, monospace; color: #b8c6e6; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .track.settle { transition-duration: .1s; }
+    .track.refreshing .spinner { animation-duration: 2s; }
+  }
+</style>
+</head>
+<body>
+  <h2>橡皮筋回弹列表 Rubber-band List</h2>
+  <p class="note">用滚轮或按住拖动列表：范围内正常滚，拖过边界越拉越沉，松手弹回；箭头转满一圈触发下拉刷新。</p>
+
+  <div class="frame">
+    <div class="scroller" id="scroller" tabindex="0" role="region" aria-label="通知列表，可滚动，带橡皮筋回弹">
+      <div class="track" id="track">
+        <div class="pull" id="pull">
+          <span class="arrow"></span><span class="spinner"></span>
+          <span id="pullText">下拉刷新</span>
+        </div>
+        <ul class="rows">
+          <li class="item" style="--c1:#35d18e;--c2:#24d3ee"><span class="dot">01</span><span class="txt"><span class="t1">部署 #4821 通过</span><span class="t2">main · 12 项检查全绿</span></span><span class="time">09:12</span></li>
+          <li class="item" style="--c1:#7c5cff;--c2:#35d18e"><span class="dot">02</span><span class="txt"><span class="t1">小林评审了你的 PR</span><span class="t2">"这段阻尼再确认一下边界"</span></span><span class="time">08:47</span></li>
+          <li class="item" style="--c1:#f7b955;--c2:#35d18e"><span class="dot">03</span><span class="txt"><span class="t1">构建耗时上升</span><span class="t2">比上周同期慢，已标记</span></span><span class="time">08:03</span></li>
+          <li class="item" style="--c1:#24d3ee;--c2:#7c5cff"><span class="dot">04</span><span class="txt"><span class="t1">新版本 2.4.0 已发布</span><span class="t2">含 3 个交互组件</span></span><span class="time">昨天</span></li>
+          <li class="item" style="--c1:#ff5f9e;--c2:#f7b955"><span class="dot">05</span><span class="txt"><span class="t1">告警已恢复</span><span class="t2">edge-3 内存回到阈值以下</span></span><span class="time">昨天</span></li>
+          <li class="item" style="--c1:#35d18e;--c2:#f7b955"><span class="dot">06</span><span class="txt"><span class="t1">周会纪要已同步</span><span class="t2">下周三演示交互手感</span></span><span class="time">周三</span></li>
+          <li class="item" style="--c1:#7c5cff;--c2:#24d3ee"><span class="dot">07</span><span class="txt"><span class="t1">新增 2 个 issue</span><span class="t2">都在 interaction 分类</span></span><span class="time">周三</span></li>
+          <li class="item" style="--c1:#24d3ee;--c2:#ff5f9e"><span class="dot">08</span><span class="txt"><span class="t1">数据看板已导出</span><span class="t2">按月汇总，含留存曲线</span></span><span class="time">周二</span></li>
+        </ul>
+      </div>
+    </div>
+    <div class="readout">
+      <span>overscroll <b id="rOb">0</b>px</span>
+      <span>进度 <b id="rP">0.00</b></span>
+      <span>scrollTop <b id="rSt">0</b></span>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="seg" role="group" aria-label="滚动方式对照">
+      <button type="button" id="mCustom" aria-pressed="true">自定义橡皮筋</button>
+      <button type="button" id="mNative" aria-pressed="false">原生滚动对照</button>
+    </div>
+    <label>阻尼 c
+      <input type="range" id="sC" min="0.55" max="5" step="0.05" value="1.2" aria-label="阻尼系数 c">
+      <output id="oC">1.20</output>
+    </label>
+    <label>边界 dim
+      <input type="range" id="sDim" min="60" max="260" step="10" value="150" aria-label="越界位移上限 dim">
+      <output id="oDim">150</output>
+    </label>
+    <label><input type="checkbox" id="cNum" checked> 显示数值</label>
+  </div>
+  <p class="hint">把 <code>c</code> 拉到 <code>5</code>，橡皮筋硬得像钢板；切到「原生滚动对照」，滚到边界直接停住，一点回弹都没有。</p>
+
+<script>
+(function () {
+  'use strict';
+
+  var scroller = document.getElementById('scroller');
+  var track = document.getElementById('track');
+  var pullText = document.getElementById('pullText');
+  var rOb = document.getElementById('rOb');
+  var rP = document.getElementById('rP');
+  var rSt = document.getElementById('rSt');
+
+  var CFG = {
+    c: 1.2,       // 阻尼系数：起始斜率 = 1/c，小于 1 会把小幅拉动放大
+    dim: 150,     // 越界位移上限（px），取不到但无限接近
+    need: 46      // 触发下拉刷新的 overscroll 阈值，等于提示区高度
+  };
+
+  var mode = 'custom';        // custom | native
+  var raw = 0;                // 越界"意图"，未阻尼，带符号：正 = 下拉，负 = 上推
+  var ob = 0;                 // 真正写进 transform 的位移 = damp(raw)
+  var drag = null;            // { id, y0, top0 }
+  var wheelTimer = null, refreshTimer = null, rafId = null;
+  var metrics = null;         // { max }：只在内容或尺寸可能变化时作废
+
+  /* 双曲线阻尼：t = |x| / c，返回 dim·t / (t + dim)。
+     单调递增、上界是 dim 且永远取不到；起始斜率 1/c，越拉越小。 */
+  function damp(x) {
+    var t = Math.abs(x) / CFG.c;
+    var v = (CFG.dim * t) / (t + CFG.dim);
+    return x < 0 ? -v : v;
+  }
+
+  function maxScroll() {
+    if (metrics === null) {
+      metrics = { max: Math.max(0, scroller.scrollHeight - scroller.clientHeight) };
+    }
+    return metrics.max;
+  }
+  window.addEventListener('resize', function () { metrics = null; });
+  function atTop() { return scroller.scrollTop <= 0; }
+  function atBottom() { return scroller.scrollTop >= maxScroll(); }
+
+  function schedule() {
+    if (rafId === null) rafId = requestAnimationFrame(paint);
+  }
+  function paint() {
+    rafId = null;
+    track.style.setProperty('--ob', ob.toFixed(1) + 'px');
+    var p = Math.max(0, Math.min(1, ob / CFG.need));
+    track.style.setProperty('--p', p.toFixed(3));   // --p 由 .pull / .arrow 继承
+    rOb.textContent = ob.toFixed(0);
+    rP.textContent = p.toFixed(2);
+    rSt.textContent = scroller.scrollTop.toFixed(0);
+    track.classList.toggle('ready', p >= 1);
+    var busy = track.classList.contains('refreshing');
+    pullText.textContent = busy ? '刷新中' : (p >= 1 ? '松手刷新' : '下拉刷新');
+  }
+
+  function settle() {
+    raw = 0; ob = 0;
+    track.classList.add('settle');
+    schedule();
+  }
+
+  /* ---------- 拖动 ---------- */
+  scroller.addEventListener('pointerdown', function (e) {
+    if (mode !== 'custom' || track.classList.contains('refreshing')) return;
+    metrics = null;
+    drag = { id: e.pointerId, y0: e.clientY, top0: scroller.scrollTop };
+    track.classList.remove('settle');
+    track.classList.add('dragging');
+    if (scroller.setPointerCapture) scroller.setPointerCapture(e.pointerId);
+  });
+
+  scroller.addEventListener('pointermove', function (e) {
+    if (mode !== 'custom' || !drag || e.pointerId !== drag.id) return;
+    var dy = e.clientY - drag.y0;          // 正 = 手指往下，想看更早的内容
+    /* 核心判断：贴着边界且还要往外拉，才由我们接管成橡皮筋；
+       否则一律当普通滚动处理，把 scrollTop 推进，别让用户觉得列表在抢手势。 */
+    if (dy > 0 && atTop()) {
+      scroller.scrollTop = 0;
+      raw = dy;
+    } else if (dy < 0 && atBottom()) {
+      scroller.scrollTop = maxScroll();
+      raw = dy;
+    } else {
+      raw = 0;
+      scroller.scrollTop = Math.min(maxScroll(), Math.max(0, drag.top0 - dy));
+    }
+    ob = damp(raw);
+    schedule();
+  });
+
+  function release(e) {
+    if (!drag || (e && e.pointerId !== drag.id)) return;
+    if (scroller.hasPointerCapture && scroller.hasPointerCapture(drag.id)) {
+      scroller.releasePointerCapture(drag.id);
+    }
+    var fired = ob >= CFG.need && !track.classList.contains('refreshing');
+    drag = null;
+    track.classList.remove('dragging');
+    if (fired) startRefresh();
+    else settle();
+  }
+  scroller.addEventListener('pointerup', release);
+  scroller.addEventListener('pointercancel', release);
+
+  function startRefresh() {
+    track.classList.add('refreshing', 'settle');
+    raw = 0;
+    ob = CFG.need;             // 停在触发位：提示区刚好全部露出
+    schedule();
+    if (refreshTimer) clearTimeout(refreshTimer);
+    refreshTimer = setTimeout(function () {
+      track.classList.remove('refreshing');
+      settle();
+      metrics = null;
+    }, 1200);
+  }
+
+  /* ---------- 滚轮：只在真要越界时 preventDefault ---------- */
+  scroller.addEventListener('wheel', function (e) {
+    if (mode !== 'custom') return;
+    var d = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;   // 行单位换算成像素
+    /* 与拖动同一套让位规则：滚得动就还给浏览器，滚不动了才接管 */
+    if (d < 0 && atTop()) {
+      e.preventDefault();
+      raw = Math.min(0, raw + d);
+    } else if (d > 0 && atBottom()) {
+      e.preventDefault();
+      raw = Math.max(0, raw + d);
+    } else {
+      return;
+    }
+    if (track.classList.contains('refreshing')) return;
+    track.classList.remove('settle');
+    ob = damp(raw);
+    schedule();
+    /* 滚轮没有"松手"事件，只能按停顿判定结束：短时间无输入就回弹 */
+    if (wheelTimer) clearTimeout(wheelTimer);
+    wheelTimer = setTimeout(settle, 140);
+  }, { passive: false });
+
+  /* ---------- 控制面板 ---------- */
+  function bindRange(id, outId, key, fmt) {
+    var inp = document.getElementById(id), out = document.getElementById(outId);
+    var run = function () { CFG[key] = parseFloat(inp.value); out.textContent = fmt(inp.value); };
+    inp.addEventListener('input', run);
+    run();
+  }
+  bindRange('sC', 'oC', 'c', function (v) { return parseFloat(v).toFixed(2); });
+  bindRange('sDim', 'oDim', 'dim', function (v) { return v; });
+  document.getElementById('cNum').addEventListener('change', function () {
+    document.body.classList.toggle('no-num', !this.checked);
+  });
+
+  var mCustom = document.getElementById('mCustom');
+  var mNative = document.getElementById('mNative');
+  function setMode(next) {
+    mode = next;
+    mCustom.setAttribute('aria-pressed', String(next === 'custom'));
+    mNative.setAttribute('aria-pressed', String(next === 'native'));
+    drag = null;
+    track.classList.remove('dragging', 'settle', 'refreshing', 'ready');
+    /* 对照模式的总闸：pan-y 让浏览器继续处理竖向拖动与惯性滚动，
+       none 则把拖动整个交给 JS。滚轮不吃 touch-action，所以上面要单独判断。 */
+    scroller.style.touchAction = next === 'custom' ? 'none' : 'pan-y';
+    settle();
+  }
+  mCustom.addEventListener('click', function () { setMode('custom'); });
+  mNative.addEventListener('click', function () { setMode('native'); });
+
+  setMode('custom');
+  paint();
+})();
+</script>
+</body>
+</html>

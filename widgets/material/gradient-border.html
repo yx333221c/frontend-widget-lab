@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>流光渐变描边 · Widget Lab</title>
+<style>
+  /* ============================================================
+     自定义属性默认不能动画：插值按字符串做，整个动画期间只有一个值。
+     注册成 <angle> 之后浏览器才知道该怎么插值，这是唯一的注册办法。
+     inherits 必须是 true：方案 B 的渐变画在 ::before 上，
+     它要靠继承拿到 .glow 上正在动画的 --angle。
+     ============================================================ */
+  @property --angle {
+    syntax: '<angle>';
+    initial-value: 0deg;
+    inherits: true;
+  }
+  :root {
+    --bg: #0e1119;
+    --ink: #e9edf6;
+    --muted: #8695b4;
+    --accent: #ff5f9e;
+    --w: 3px;            /* 描边宽度，滑块写入 */
+    --radius: 18px;      /* 外圆角，滑块写入 */
+    --speed: 6s;         /* 一圈耗时 */
+    --fill: #111522;
+    --stops: #ff5f9e, #f7b955, #35d18e, #24d3ee, #7c5cff, #ff5f9e;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 22px 20px;
+    background:
+      radial-gradient(110% 80% at 88% -22%, #241a2e 0%, transparent 58%),
+      var(--bg);
+    color: var(--ink);
+    font: 14px/1.6 system-ui, "PingFang SC", "Microsoft YaHei", sans-serif;
+  }
+  h2 { margin: 0 0 4px; font-size: 15px; letter-spacing: -.2px; }
+  p.note { margin: 0 0 12px; color: var(--muted); font-size: 12.5px; }
+
+  @keyframes spin { to { --angle: 360deg; } }
+  /* 离散时序对照：注册过的属性也能被 steps() 拆成只有两个值，
+     这就是"忘了写 @property"时看到的跳变 */
+  @keyframes discrete { from { --angle: 0deg; } to { --angle: 90deg; } }
+
+  .stage { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: flex-start; }
+  .item { display: flex; flex-direction: column; gap: 4px; }
+  .tag { font-size: 10.5px; color: var(--muted); font-family: ui-monospace, Consolas, monospace; }
+
+  /* 同一套动画挂在四种形态上，只改尺寸和圆角 */
+  .glow { animation: spin var(--speed) linear infinite; }
+
+  /* ---------- 方案 A：border + 双层 background + background-clip ---------- */
+  .t-a {
+    border: var(--w) solid transparent;
+    border-radius: var(--rr, var(--radius));
+    background:
+      linear-gradient(var(--fill), var(--fill)) padding-box,
+      conic-gradient(from var(--angle), var(--stops)) border-box;
+  }
+  /* ---------- 方案 B：伪元素铺渐变 + mask-composite: exclude 挖空 ---------- */
+  .t-b {
+    position: relative;
+    border-radius: var(--rr, var(--radius));
+    background: var(--fill);
+  }
+  .t-b::before {
+    content: ""; position: absolute; inset: 0;
+    border-radius: inherit;                 /* 外圆角照抄 */
+    padding: var(--w);                      /* 环厚 = padding，不是 border */
+    background: conic-gradient(from var(--angle), var(--stops));
+    /* 简写会重置合成方式，所以 composite 必须写在 mask 简写之后 */
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;            /* 旧 WebKit 只认 xor */
+    mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    mask-composite: exclude;                /* 标准名是 exclude */
+  }
+
+  /* ---------- 四个形态 ---------- */
+  .card { flex: none; width: 176px; padding: 9px 11px; font-size: 11.5px; line-height: 1.45; }
+  .card b { display: block; font-size: 12px; letter-spacing: -.1px; margin-bottom: 3px; }
+  .btn {
+    padding: 8px 16px; font: inherit; font-size: 12.5px; font-weight: 700;
+    cursor: pointer; color: var(--ink);
+    --rr: calc(var(--radius) + 15px);       /* 胶囊：半径远大于描边宽度 */
+  }
+  .ava {
+    flex: none; width: 56px; height: 56px; --rr: 50%;
+    display: grid; place-items: center; font-size: 10.5px; color: #cdd6ec; text-align: center;
+  }
+  .naive { animation-name: discrete; animation-timing-function: steps(2, jump-none); }
+
+  .calc { margin-top: 8px; font-size: 11.5px; color: var(--muted);
+          font-family: ui-monospace, Consolas, monospace; }
+  .calc b { color: var(--accent); font-weight: 600; }
+  .calc em { font-style: normal; color: #f7b955; }
+
+  .panel {
+    display: flex; flex-wrap: wrap; gap: 7px 16px; align-items: center;
+    margin-top: 9px; padding: 8px 12px; border-radius: 12px;
+    background: rgba(255, 255, 255, .04); border: 1px solid rgba(255, 255, 255, .1);
+    font-size: 12px; color: #a9b6d1;
+  }
+  .panel label { display: flex; align-items: center; gap: 7px; white-space: nowrap; }
+  .panel input[type="range"] { width: 84px; accent-color: var(--accent); }
+  .panel output { font-variant-numeric: tabular-nums; color: var(--ink); min-width: 44px; }
+  .panel .chk { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+  .panel input[type="checkbox"] { accent-color: var(--accent); }
+  .panel .stat { font-size: 11px; color: var(--muted); font-family: ui-monospace, Consolas, monospace; }
+  .panel .stat b { color: #35d18e; font-weight: 600; }
+  .panel .stat i { font-style: normal; color: #f7b955; }
+  code { font: 11px ui-monospace, Consolas, monospace; color: #b8c6e6; }
+
+  /* 不支持 conic-gradient：退回线性渐变，描边还在，只是不转 */
+  @supports not (background: conic-gradient(from 45deg, #000, #fff)) {
+    .t-a { background: linear-gradient(var(--fill), var(--fill)) padding-box,
+                     linear-gradient(90deg, #ff5f9e, #24d3ee) border-box; }
+    .t-b::before { background: linear-gradient(90deg, #ff5f9e, #24d3ee); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .glow { animation-duration: 20s; }
+  }
+</style>
+</head>
+<body>
+  <h2>流光渐变描边 Gradient Border</h2>
+  <p class="note">A 与 B 参数完全相同。把外圆角推到 <code>44px</code>、描边压到 <code>1px</code>，再和最右边的离散对照比一比。</p>
+
+  <div class="stage">
+    <div class="item">
+      <div class="card glow t-a">
+        <b>方案 A · background-clip</b>
+        padding-box 层铺底色，border-box 层铺锥形渐变。内侧圆角由浏览器折算。
+      </div>
+      <span class="tag">A · border + 2×background</span>
+    </div>
+
+    <div class="item">
+      <div class="card glow t-b">
+        <b>方案 B · mask-composite</b>
+        伪元素整块铺渐变，再用两层 mask 求 exclude 差集，环厚由 padding 决定。
+      </div>
+      <span class="tag">B · ::before + content-box exclude</span>
+    </div>
+
+    <div class="item">
+      <button class="btn glow t-b" type="button" id="cta">立即开通</button>
+      <span class="tag">胶囊 · B</span>
+    </div>
+
+    <div class="item">
+      <div class="ava glow t-a">A<br>圆框</div>
+      <span class="tag">--rr: 50%</span>
+    </div>
+
+    <div class="item">
+      <div class="ava glow t-b naive">离散<br>对照</div>
+      <span class="tag">steps(2) 模拟未注册</span>
+    </div>
+  </div>
+
+  <div class="calc">内圆角 = 外圆角 − 描边宽度 = <b id="innerR">15px</b><span id="warn"></span></div>
+
+  <div class="panel">
+    <label>转速
+      <input type="range" id="sSpeed" min="0" max="14" step="0.5" value="6" aria-label="一圈耗时，0 为暂停">
+      <output id="oSpeed">6.0s/圈</output>
+    </label>
+    <label>描边
+      <input type="range" id="sWidth" min="1" max="10" step="1" value="3" aria-label="描边宽度">
+      <output id="oWidth">3px</output>
+    </label>
+    <label>圆角
+      <input type="range" id="sRadius" min="0" max="44" step="1" value="18" aria-label="外圆角">
+      <output id="oRadius">18px</output>
+    </label>
+    <label class="chk"><input type="checkbox" id="cSwap"> A/B 对调</label>
+    <span class="stat">@property: <b id="propOk">…</b></span>
+  </div>
+
+<script>
+(function () {
+  'use strict';
+
+  var root = document.documentElement;
+
+  /* 特性检测：@supports 只能测声明，测不了 at-rule。
+     注册成功的属性会带着 initial-value 出现在计算值里；
+     没注册时这条声明不存在，getPropertyValue 取到空串。 */
+  var ok = getComputedStyle(root).getPropertyValue('--angle').trim() !== '';
+  document.getElementById('propOk').innerHTML =
+    ok ? '<b>已注册</b>' : '<i>未注册 → 跳变</i>';
+
+  var sSpeed = document.getElementById('sSpeed'), oSpeed = document.getElementById('oSpeed');
+  var sWidth = document.getElementById('sWidth'), oWidth = document.getElementById('oWidth');
+  var sRadius = document.getElementById('sRadius'), oRadius = document.getElementById('oRadius');
+  var elInner = document.getElementById('innerR'), elWarn = document.getElementById('warn');
+  var glows = Array.prototype.slice.call(document.querySelectorAll('.glow'));
+  var queued = false;
+
+  /* 滑块一帧触发几十次 input：合并到下一帧写一次 */
+  function sync() {
+    if (queued) return;
+    queued = true;
+    requestAnimationFrame(function () {
+      queued = false;
+      var w = parseFloat(sWidth.value), r = parseFloat(sRadius.value), s = parseFloat(sSpeed.value);
+      root.style.setProperty('--w', w + 'px');
+      root.style.setProperty('--radius', r + 'px');
+      oWidth.textContent = w + 'px';
+      oRadius.textContent = r + 'px';
+      oSpeed.textContent = s === 0 ? '已暂停' : s.toFixed(1) + 's/圈';
+      glows.forEach(function (el) {
+        el.style.animationPlayState = s === 0 ? 'paused' : 'running';
+        if (s > 0) el.style.animationDuration = s + 's';
+      });
+      /* 内圆角公式：算出负数时浏览器按 0 处理，视觉上是"外圆内方" */
+      var inner = r - w;
+      elInner.textContent = (inner < 0 ? 0 : inner) + 'px';
+      elWarn.innerHTML = inner < 0 ? ' <em>← 已为负，内角退化成直角</em>'
+                                   : (r >= 30 ? ' <em>← 大圆角，A 的内侧折线最容易露出来</em>' : '');
+    });
+  }
+  [sSpeed, sWidth, sRadius].forEach(function (i) { i.addEventListener('input', sync); });
+  sync();
+
+  /* 对调只换挖空方式：动画、尺寸、圆角都不动，差异才能归因到方案本身 */
+  document.getElementById('cSwap').addEventListener('change', function () {
+    var swap = this.checked;
+    glows.forEach(function (el) {
+      if (!el.dataset.origin) el.dataset.origin = el.classList.contains('t-a') ? 'a' : 'b';
+      var want = swap ? (el.dataset.origin === 'a' ? 'b' : 'a') : el.dataset.origin;
+      el.classList.toggle('t-a', want === 'a');
+      el.classList.toggle('t-b', want === 'b');
+    });
+  });
+
+  document.getElementById('cta').addEventListener('click', function () {
+    this.textContent = this.textContent === '立即开通' ? '已加入' : '立即开通';
+  });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>拉丝金属铭牌 · Widget Lab</title>
+<style>
+  /* ============================================================
+     拉丝金属铭牌：一个光源角 a 同时驱动三件事
+       高光带朝向 / 拉丝条纹朝向 / 刻字双向阴影方向
+     纹理与高光写在同一元素的 background 层里，用
+     background-blend-mode 互混：不读背后内容，也不建隔离组。
+     ============================================================ */
+  :root {
+    --bg: #0e1119;
+    --ink: #e9edf6;
+    --muted: #8695b4;
+    --accent: #c9d3e6;
+    /* 金属三色 + 刻字色，由 preset 写入 */
+    --m1: #f2f5fa; --m2: #c5cede; --m3: #93a0b4; --pent: #7e8ba3;
+    /* a = 光源方向角（屏幕坐标：0° 向右，90° 向下，225° 来自左上） */
+    --hi: 315deg;        /* 渐变轴 = a + 90，高光带垂直于入射方向 */
+    --sx: -0.71px;       /* 单位向量 × 1px，三处阴影共用 */
+    --sy: -0.71px;
+    --grain: 3px;        /* 拉丝周期：明暗条纹各占一半 */
+    --sxp: 72%; --syp: 72%;   /* 螺丝头高光点位置 */
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 22px 20px;
+    background:
+      radial-gradient(120% 90% at 14% -14%, #1b2138 0%, transparent 58%),
+      radial-gradient(90% 80% at 100% 116%, #182234 0%, transparent 52%),
+      var(--bg);
+    color: var(--ink);
+    font: 14px/1.6 system-ui, "PingFang SC", "Microsoft YaHei", sans-serif;
+  }
+  h2 { margin: 0 0 4px; font-size: 15px; letter-spacing: -.2px; }
+  p.note { margin: 0 0 12px; color: var(--muted); font-size: 12.5px; }
+
+  .wrap { display: flex; flex-wrap: wrap; gap: 14px; align-items: flex-start; }
+
+  /* ============ 铭牌 ============ */
+  .plate {
+    position: relative; isolation: isolate;
+    flex: none; width: 288px; height: 150px;
+    padding: 18px 22px;
+    border-radius: 7px;
+    overflow: hidden;
+    background-color: var(--m3);
+    /* 层序自上而下：斜向高光 → 拉丝条纹 → 金属本体渐变 */
+    background-image:
+      linear-gradient(var(--hi),
+        rgba(255, 255, 255, 0) 6%,
+        rgba(255, 255, 255, .5) 46%,
+        rgba(255, 255, 255, .14) 62%,
+        rgba(255, 255, 255, 0) 92%),
+      repeating-linear-gradient(var(--hi),
+        rgba(255, 255, 255, .10) 0 1px,
+        rgba(0, 0, 0, .09) 1px var(--grain)),
+      linear-gradient(168deg, var(--m1) 0%, var(--m2) 44%, var(--m3) 100%);
+    /* 同元素多层背景互混：高光只压亮金属，不牵动页面背景 */
+    background-blend-mode: overlay, soft-light, normal;
+    box-shadow:
+      calc(var(--sx) * -14) calc(var(--sy) * -14) 26px rgba(4, 7, 16, .8),
+      /* 倒角也跟随光源：亮带落在迎光的内沿，暗带在背面 */
+      inset calc(var(--sx) * -1.5) calc(var(--sy) * -1.5) 0 rgba(255, 255, 255, .55),
+      inset calc(var(--sx) * 3) calc(var(--sy) * 3) 5px rgba(20, 26, 40, .4);
+  }
+  /* 抗锯齿模式：拉丝独立成层才能 blur，代价是退回 mix-blend-mode */
+  .brush { display: none; }
+  body.soft .brush {
+    display: block; position: absolute; inset: 0; z-index: 1;
+    background: repeating-linear-gradient(var(--hi),
+      rgba(255, 255, 255, .16) 0 1px,
+      rgba(0, 0, 0, .13) 1px var(--grain));
+    filter: blur(.3px);
+    mix-blend-mode: soft-light;
+  }
+  /* 关掉拉丝 / 抗锯齿：都退回"高光 + 本体"两层 */
+  body.soft .plate, body.no-grain .plate {
+    background-image:
+      linear-gradient(var(--hi),
+        rgba(255, 255, 255, 0) 6%,
+        rgba(255, 255, 255, .5) 46%,
+        rgba(255, 255, 255, .14) 62%,
+        rgba(255, 255, 255, 0) 92%),
+      linear-gradient(168deg, var(--m1) 0%, var(--m2) 44%, var(--m3) 100%);
+    background-blend-mode: overlay, normal;
+  }
+  body.no-grain .brush { display: none; }
+
+  /* 刻字凹陷：暗面落在光源一侧，亮面在背光一侧 */
+  .engrave {
+    position: relative; z-index: 2; margin: 0;
+    font-size: 20px; font-weight: 800; letter-spacing: .5px;
+    color: var(--pent);
+    text-shadow:
+      var(--sx) var(--sy) 1px rgba(8, 12, 22, .68),
+      calc(var(--sx) * -1) calc(var(--sy) * -1) 1px rgba(255, 255, 255, .8);
+  }
+  /* 凸起：两层阴影互换 */
+  body.emboss .engrave {
+    text-shadow:
+      calc(var(--sx) * -1) calc(var(--sy) * -1) 1px rgba(8, 12, 22, .68),
+      var(--sx) var(--sy) 1px rgba(255, 255, 255, .8);
+  }
+  /* 关掉阴影：字像贴上去的贴纸 */
+  body.flat .engrave { text-shadow: none; color: #f7fafc; }
+  .sub {
+    position: relative; z-index: 2; margin: 5px 0 0;
+    font-size: 10px; letter-spacing: 1.5px; color: var(--pent);
+    text-shadow: var(--sx) var(--sy) 1px rgba(8, 12, 22, .5),
+                 calc(var(--sx) * -1) calc(var(--sy) * -1) 1px rgba(255, 255, 255, .6);
+  }
+  body.emboss .sub, body.flat .sub { text-shadow: none; }
+  .lot {
+    position: absolute; z-index: 2; right: 26px; bottom: 14px;
+    font: 9.5px/1 ui-monospace, Consolas, monospace; letter-spacing: .8px;
+    color: var(--pent); opacity: .85;
+  }
+
+  /* ============ 螺丝孔 ============ */
+  .screw {
+    position: absolute; z-index: 2;
+    width: 15px; height: 15px; border-radius: 50%;
+    background:
+      radial-gradient(circle at 50% 50%, rgba(20, 26, 38, .9) 0 24%,
+        rgba(255, 255, 255, .8) 30% 38%, rgba(255, 255, 255, 0) 46%),
+      radial-gradient(circle at var(--sxp) var(--syp), #e4eaf4 0 26%, #97a4ba 64%, #59647a 100%);
+    box-shadow:
+      var(--sx) var(--sy) 1px rgba(255, 255, 255, .6),
+      calc(var(--sx) * -1) calc(var(--sy) * -1) 1px rgba(6, 10, 18, .5);
+  }
+  /* 一字槽：一条深色 bar，靠自身旋转即可，不用 background-size 拼十字 */
+  .screw::after {
+    content: ""; position: absolute; left: 2px; right: 2px; top: 50%;
+    height: 2px; margin-top: -1px; border-radius: 1px;
+    background: rgba(12, 16, 26, .78);
+    box-shadow: 0 1px 0 rgba(255, 255, 255, .5);
+    transform: rotate(var(--slot, 30deg));
+  }
+  .s1 { left: 9px; top: 9px; --slot: 35deg; }
+  .s2 { right: 9px; top: 9px; --slot: -20deg; }
+  .s3 { left: 9px; bottom: 9px; --slot: -60deg; }
+  .s4 { right: 9px; bottom: 9px; --slot: 15deg; }
+  .s5 { left: 9px; top: calc(50% - 8px); --slot: 70deg; }
+  .s6 { right: 9px; top: calc(50% - 8px); --slot: -45deg; }
+  body.c2 .s3, body.c2 .s4, body.c2 .s5, body.c2 .s6 { display: none; }
+  body.c4 .s5, body.c4 .s6 { display: none; }
+
+  /* ============ 控制区 ============ */
+  .side { flex: 1 1 268px; min-width: 250px; }
+  .panel {
+    padding: 8px 11px; border-radius: 12px;
+    background: rgba(255, 255, 255, .04); border: 1px solid rgba(255, 255, 255, .1);
+    font-size: 12px; color: #a9b6d1;
+  }
+  .row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 9px; }
+  .row + .row { margin-top: 6px; padding-top: 6px;
+                border-top: 1px dashed rgba(255, 255, 255, .09); }
+  .row > .lb { min-width: 52px; color: var(--muted); font-size: 11.5px; }
+  .row input[type="range"] { flex: 1; min-width: 78px; accent-color: var(--accent); }
+  .row output { font-variant-numeric: tabular-nums; color: var(--ink);
+                min-width: 44px; font-size: 11.5px; }
+  .seg { display: flex; gap: 4px; flex-wrap: wrap; }
+  .seg button {
+    cursor: pointer; padding: 2px 8px; border-radius: 8px;
+    font: inherit; font-size: 11.5px; color: #cdd6ec;
+    background: rgba(255, 255, 255, .05);
+    border: 1px solid rgba(255, 255, 255, .12);
+    transition: background .18s, color .18s, border-color .18s;
+  }
+  .seg button:hover { background: rgba(255, 255, 255, .1); }
+  .seg button[aria-pressed="true"] {
+    color: #10141f; background: var(--accent); border-color: var(--accent); font-weight: 700;
+  }
+  .seg button.sw[aria-pressed="true"] { background: #ff5f9e; border-color: #ff5f9e; color: #1b0a13; }
+  .hint { margin: 8px 0 0; font-size: 11px; color: #6c7893; line-height: 1.5; }
+  .hint b { color: #a9b6d1; font-weight: 600; }
+  code { font: 11px ui-monospace, Consolas, monospace; color: #b8c6e6; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .seg button { transition-duration: .01s; }
+  }
+</style>
+</head>
+<body>
+  <h2>拉丝金属铭牌 Metal Plate</h2>
+  <p class="note">拖动光源角度：高光、拉丝、刻字阴影一起转。周期压到 <code>0.5px</code> 看摩尔纹，再开抗锯齿对比。</p>
+
+  <div class="wrap">
+    <div class="plate" id="plate">
+      <div class="brush" aria-hidden="true"></div>
+      <p class="engrave">WIDGET LAB · NO.047</p>
+      <p class="sub">质感与光影 / MATERIAL SERIES</p>
+      <span class="lot">PURE CSS</span>
+      <span class="screw s1"></span><span class="screw s2"></span>
+      <span class="screw s3"></span><span class="screw s4"></span>
+      <span class="screw s5"></span><span class="screw s6"></span>
+    </div>
+
+    <div class="side">
+      <div class="panel">
+        <div class="row"><span class="lb">金属</span>
+          <div class="seg" id="segMetal">
+            <button type="button" data-p="alu" aria-pressed="true">铝</button>
+            <button type="button" data-p="brass" aria-pressed="false">黄铜</button>
+            <button type="button" data-p="steel" aria-pressed="false">不锈钢</button>
+            <button type="button" data-p="anod" aria-pressed="false">阳极紫</button>
+          </div>
+        </div>
+        <div class="row"><span class="lb">光源角度</span>
+          <input type="range" id="sAngle" min="0" max="360" step="2" value="225" aria-label="光源角度">
+          <output id="oAngle">225°</output>
+        </div>
+        <div class="row"><span class="lb">拉丝周期</span>
+          <input type="range" id="sGrain" min="0.5" max="6" step="0.5" value="3" aria-label="拉丝周期">
+          <output id="oGrain">3px</output>
+        </div>
+        <div class="row"><span class="lb">螺丝</span>
+          <div class="seg" id="segScrew">
+            <button type="button" data-c="2" aria-pressed="false">2 颗</button>
+            <button type="button" data-c="4" aria-pressed="true">4 颗</button>
+            <button type="button" data-c="6" aria-pressed="false">6 颗</button>
+          </div>
+          <span class="lb">刻字</span>
+          <div class="seg" id="segCarve">
+            <button type="button" data-m="engrave" aria-pressed="true">凹陷</button>
+            <button type="button" data-m="emboss" aria-pressed="false">凸起</button>
+            <button type="button" data-m="flat" aria-pressed="false">无阴影</button>
+          </div>
+        </div>
+        <div class="row"><span class="lb">对比层</span>
+          <div class="seg">
+            <button type="button" class="sw" id="bGrain" aria-pressed="true">关掉拉丝</button>
+            <button type="button" class="sw" id="bSoft" aria-pressed="false">抗锯齿：独立层 + blur(.3px)</button>
+          </div>
+        </div>
+      </div>
+      <p class="hint"><b>凹陷</b>＝暗面在光源一侧、亮面在背光一侧；<b>凸起</b>是两层互换；<b>无阴影</b>后字像贴纸。<b>关掉拉丝</b>只剩高光，铝板立刻变塑料片。<b>抗锯齿</b>把纹理搬到 <code>.brush</code> 独立层才能用 <code>filter: blur(.3px)</code>，混合方式同时从 <code>background-blend-mode</code> 退回 <code>mix-blend-mode</code>。</p>
+    </div>
+  </div>
+
+<script>
+(function () {
+  'use strict';
+
+  var root = document.documentElement;
+  var body = document.body;
+
+  var PRESETS = {
+    alu:   { m1: '#f2f5fa', m2: '#c5cede', m3: '#93a0b4', pen: '#7e8ba3' },
+    brass: { m1: '#f8e6bb', m2: '#d6ac53', m3: '#9a7226', pen: '#7d5a17' },
+    steel: { m1: '#eaf0f7', m2: '#a9b6c9', m3: '#6d7b91', pen: '#55637a' },
+    anod:  { m1: '#cfbcff', m2: '#8b64da', m3: '#49308a', pen: '#382564' }
+  };
+
+  var state = { preset: 'alu', angle: 225, grain: 3, screws: 4, carve: 'engrave', soft: false, grainOn: true };
+
+  var queued = false;
+  /* 滑块一帧能触发几十次 input：合并到下一帧，一次写完所有自定义属性 */
+  function render() {
+    if (queued) return;
+    queued = true;
+    requestAnimationFrame(function () {
+      queued = false;
+      var p = PRESETS[state.preset];
+      root.style.setProperty('--m1', p.m1);
+      root.style.setProperty('--m2', p.m2);
+      root.style.setProperty('--m3', p.m3);
+      root.style.setProperty('--pent', p.pen);
+
+      var a = state.angle * Math.PI / 180;
+      /* 一个角度喂三处：高光轴 = a+90，阴影偏移 = (cos, sin) × 1px */
+      root.style.setProperty('--hi', (state.angle + 90) + 'deg');
+      root.style.setProperty('--sx', (Math.cos(a) * 1).toFixed(2) + 'px');
+      root.style.setProperty('--sy', (Math.sin(a) * 1).toFixed(2) + 'px');
+      /* 螺丝头高光点顶向光源：亮斑要落在迎光那一侧 */
+      root.style.setProperty('--sxp', (50 + Math.cos(a) * 24).toFixed(1) + '%');
+      root.style.setProperty('--syp', (50 + Math.sin(a) * 24).toFixed(1) + '%');
+
+      root.style.setProperty('--grain', state.grain + 'px');
+
+      body.className = 'c' + state.screws +
+        (state.carve === 'emboss' ? ' emboss' : state.carve === 'flat' ? ' flat' : '') +
+        (state.soft ? ' soft' : '') +
+        (state.grainOn ? '' : ' no-grain');
+    });
+  }
+
+  var sAngle = document.getElementById('sAngle'), oAngle = document.getElementById('oAngle');
+  var sGrain = document.getElementById('sGrain'), oGrain = document.getElementById('oGrain');
+
+  sAngle.addEventListener('input', function () {
+    state.angle = parseFloat(sAngle.value);
+    oAngle.textContent = state.angle + '°';
+    render();
+  });
+  sGrain.addEventListener('input', function () {
+    state.grain = parseFloat(sGrain.value);
+    oGrain.textContent = state.grain + 'px';
+    render();
+  });
+
+  /* 分段按钮：互斥状态直接用 aria-pressed，不需要额外类 */
+  function group(segId, onPick) {
+    var seg = document.getElementById(segId);
+    seg.addEventListener('click', function (e) {
+      var b = e.target.closest ? e.target.closest('button') : null;
+      if (!b) return;
+      Array.prototype.forEach.call(seg.querySelectorAll('button'), function (x) {
+        x.setAttribute('aria-pressed', x === b ? 'true' : 'false');
+      });
+      onPick(b);
+      render();
+    });
+  }
+  group('segMetal', function (b) { state.preset = b.dataset.p; });
+  group('segScrew', function (b) { state.screws = parseInt(b.dataset.c, 10); });
+  group('segCarve', function (b) { state.carve = b.dataset.m; });
+
+  /* 两个"关掉这一层"的对比开关 */
+  var bGrain = document.getElementById('bGrain');
+  bGrain.addEventListener('click', function () {
+    state.grainOn = bGrain.getAttribute('aria-pressed') === 'true' ? false : true;
+    bGrain.setAttribute('aria-pressed', String(state.grainOn));
+    bGrain.textContent = state.grainOn ? '关掉拉丝' : '打开拉丝';
+    render();
+  });
+  var bSoft = document.getElementById('bSoft');
+  bSoft.addEventListener('click', function () {
+    state.soft = bSoft.getAttribute('aria-pressed') !== 'true';
+    bSoft.setAttribute('aria-pressed', String(state.soft));
+    render();
+  });
+
+  render();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>手绘风雷达图 · Widget Lab</title>
+<style>
+  :root {
+    --bg: #0e1119;
+    --ink: #e9edf6;
+    --sub: #8695b4;
+    --accent: #24d3ee;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 22px 20px;
+    background:
+      radial-gradient(120% 90% at 8% -20%, #16283a 0%, transparent 60%),
+      radial-gradient(90% 80% at 100% 120%, #1b2140 0%, transparent 55%),
+      var(--bg);
+    color: var(--ink);
+    font: 14px/1.6 system-ui, "PingFang SC", "Microsoft YaHei", sans-serif;
+    overflow-x: hidden;
+  }
+  h2 { margin: 0 0 3px; font-size: 15px; letter-spacing: -.2px; }
+  p.note { margin: 0 0 9px; color: var(--sub); font-size: 12px; }
+  code { font: 11.5px ui-monospace, Consolas, monospace; color: #b8c6e6; }
+
+  /* 图在左、控件在右：iframe 高度有限，并排比上下堆叠省一半高度 */
+  .wrap { display: flex; flex-wrap: wrap; gap: 14px; align-items: flex-start; }
+  /* 基准宽度按 iframe 最窄的 560px 算：两栏加起来 474 < 520，保证不折行堆高 */
+  .chartbox { flex: 1 1 200px; max-width: 262px; }
+  svg { display: block; width: 100%; max-width: 100%; height: auto; }
+  /* 混合模式要有不透明的底可混：透明 backdrop 上 multiply 等于没乘 */
+  #radar { isolation: isolate; }
+
+  .grid { fill: none; stroke: rgba(255, 255, 255, .13); stroke-width: 1; }
+  .spoke { stroke: rgba(255, 255, 255, .16); stroke-width: 1; }
+  .tick { fill: #6c7893; font-size: 7.5px; font-family: ui-monospace, Consolas, monospace; }
+  .axlabel { fill: #a9b6d1; font-size: 9.5px; }
+
+  .poly {
+    fill: none; stroke-width: 1.8; stroke-linejoin: round;
+    stroke-dasharray: 7 5;
+  }
+  .area { stroke: none; }
+  .area.a { mix-blend-mode: screen; }       /* 深底上越叠越亮，适合暗色主题 */
+  .area.b { mix-blend-mode: normal; }
+  .area.c { mix-blend-mode: multiply; }     /* 深底上把形状吃掉，故意留给你看 */
+  .off { display: none; }
+
+  .side { flex: 1 1 210px; min-width: 200px; }
+  .cap {
+    padding: 4px 9px; margin-bottom: 6px; border-radius: 10px;
+    font-size: 11px; color: #a9b6d1;
+    background: rgba(255, 255, 255, .04); border: 1px solid rgba(255, 255, 255, .1);
+  }
+  .cap b { color: var(--ink); font-variant-numeric: tabular-nums; }
+  .panel {
+    display: flex; flex-direction: column; gap: 6px;
+    padding: 8px 11px; border-radius: 12px;
+    background: rgba(255, 255, 255, .04); border: 1px solid rgba(255, 255, 255, .1);
+    font-size: 11.5px; color: #a9b6d1;
+  }
+  /* 每个控制项一行：标签 + 控件，iframe 高度只有 380，不能竖着堆 */
+  .ctl { display: flex; align-items: center; gap: 8px; min-height: 21px; }
+  .ctl > .gt { flex: none; width: 58px; font-size: 10.5px; color: #6c7893; }
+  .ctl > .body { display: flex; flex: 1 1 auto; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+  .ctl.stack { flex-direction: column; align-items: flex-start; gap: 2px; }
+  .ctl.stack > .body { width: 100%; }
+  .chk { display: flex; align-items: center; gap: 4px; cursor: pointer; font-size: 11px; }
+  #legend { flex-wrap: nowrap; }        /* 三个勾选必须排一行，竖着堆要多占两行高 */
+  .chk i { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
+  input[type="checkbox"] { accent-color: var(--accent); }
+  input[type="range"] { flex: 1 1 70px; min-width: 70px; accent-color: var(--accent); }
+  select {
+    font: 11px system-ui, sans-serif; color: var(--ink); padding: 2px 4px; border-radius: 7px;
+    background: rgba(255, 255, 255, .07); border: 1px solid rgba(255, 255, 255, .16);
+  }
+  output { font-variant-numeric: tabular-nums; color: var(--ink); min-width: 22px; }
+  .btn {
+    font: 600 11px/1 system-ui, sans-serif; color: var(--ink);
+    padding: 5px 9px; border-radius: 9px; cursor: pointer;
+    background: rgba(255, 255, 255, .07); border: 1px solid rgba(255, 255, 255, .14);
+    transition: background .2s, border-color .2s;
+  }
+  .btn:hover { background: rgba(36, 211, 238, .2); border-color: rgba(36, 211, 238, .6); }
+  .tip { margin: 5px 0 0; color: #6c7893; font-size: 10.5px; line-height: 1.5; }
+
+</style>
+</head>
+<body>
+  <h2>手绘风雷达图 Radar Chart</h2>
+  <p class="note">数据：三个候选方案在 6 项指标上的评分（0–100，虚构）。点算靠极坐标，成面靠一条 path，抖动全靠一层噪声位移滤镜。</p>
+
+  <div class="wrap">
+    <div class="chartbox">
+      <svg id="radar" viewBox="0 0 300 250" role="img" aria-label="雷达图：三个方案在六项指标上的评分对比">
+        <defs>
+          <!-- 手绘感的全部来源：噪声贴图决定每个像素往哪儿挪。
+               x/y/width/height 是滤镜区域，必须比包围盒大一圈，
+               否则位移后越界的笔画会被直接切掉。 -->
+          <filter id="sketch" filterUnits="objectBoundingBox"
+                  x="-20%" y="-20%" width="140%" height="140%">
+            <feTurbulence id="turb" type="fractalNoise" baseFrequency="0.045"
+                          numOctaves="2" seed="7" result="noise"/>
+            <feDisplacementMap id="disp" in="SourceGraphic" in2="noise"
+                               scale="3.5" xChannelSelector="R" yChannelSelector="G"/>
+          </filter>
+        </defs>
+
+        <rect x="0" y="0" width="300" height="250" fill="#121724"/>
+        <g id="grid" filter="url(#sketch)"></g>
+        <g id="polys"></g>
+        <g id="ticks"></g>
+        <g id="axlabels"></g>
+      </svg>
+    </div>
+
+    <div class="side">
+      <div class="cap">面积比是雷达图的陷阱：<b id="capArea">—</b></div>      <div class="panel">
+        <div class="ctl">
+          <span class="gt">① 叠加</span>
+          <span class="body" id="legend"></span>
+        </div>
+        <div class="ctl">
+          <span class="gt">② 改 A</span>
+          <span class="body">
+            <select id="selAxis" aria-label="选择要修改的轴"></select>
+            <input type="range" id="sAxis" min="0" max="100" step="1" value="55" aria-label="该项评分">
+            <output id="oAxis">55</output>
+          </span>
+        </div>
+        <div class="ctl">
+          <span class="gt">③ 抖动</span>
+          <span class="body">
+            <input type="range" id="sNoise" min="0" max="10" step="0.5" value="3.5" aria-label="抖动强度">
+            <output id="oNoise">3.5</output>
+          </span>
+        </div>
+        <div class="ctl">
+          <span class="gt">④ 换轴顺序</span>
+          <span class="body">
+            <button class="btn" id="bOrder">↻ 重排</button>
+            <output id="oOrder">顺序 1</output>
+          </span>
+        </div>
+        <div class="ctl">
+          <span class="gt">⑤ 描边流动</span>
+          <span class="body">
+            <label class="chk"><input type="checkbox" id="cFlow" checked aria-label="虚线流动"> 缓慢描边</label>
+            <output id="oFlow">开</output>
+          </span>
+        </div>
+      </div>
+      <p class="tip">③ 拉到 <code>0</code> 看没有滤镜有多机械，拉到 <code>9</code> 看笔画糊成一团。</p>
+    </div>
+  </div>
+
+<script>
+(function () {
+  'use strict';
+
+  var CX = 150, CY = 124, R = 88, MAX = 100;
+  var REDUCE = window.matchMedia &&
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  /* ---------------- 数据：6 项指标 × 3 个方案 ---------------- */
+  var AXES = ['首屏', '交互', '体积', '生态', '上手', 'SSR'];
+  var DATA = [
+    { id: 'a', name: '方案 A', color: '#24d3ee', v: [82, 64, 38, 90, 55, 72], on: true },
+    { id: 'b', name: '方案 B', color: '#ff5f9e', v: [54, 88, 76, 60, 80, 44], on: true },
+    { id: 'c', name: '方案 C', color: '#f7b955', v: [70, 52, 90, 42, 66, 58], on: false }
+  ];
+  /* 三种轴排列。同一份数据换个顺序，围出来的面积差很多：这就是雷达图的误导之处 */
+  var ORDERS = [
+    [0, 1, 2, 3, 4, 5],
+    [0, 3, 1, 4, 2, 5],
+    [4, 0, 3, 1, 5, 2]
+  ];
+  var orderIdx = 0;
+
+  var NS = 'http://www.w3.org/2000/svg';
+  function el(tag, attrs) {
+    var n = document.createElementNS(NS, tag);
+    for (var k in attrs) n.setAttribute(k, attrs[k]);
+    return n;
+  }
+  function ordered(arr) {                    // 按当前轴顺序重排一组值
+    var o = ORDERS[orderIdx], out = [];
+    for (var i = 0; i < o.length; i++) out[i] = arr[o[i]];
+    return out;
+  }
+  function axisName(i) { return AXES[ORDERS[orderIdx][i]]; }
+
+  /* ============ 极坐标：起始角必须是 -π/2 ============ */
+  function pt(r, i, n) {
+    var a = -Math.PI / 2 + i * (Math.PI * 2 / n);   // 第 0 根轴指向 12 点
+    return [CX + r * Math.cos(a), CY + r * Math.sin(a)];
+  }
+  function ringPath(vals) {                  // 一条闭合折线：数据多边形或网格圈
+    var n = vals.length, d = '';
+    for (var i = 0; i < n; i++) {
+      var p = pt(R * vals[i] / MAX, i, n);
+      d += (i ? 'L' : 'M') + p[0].toFixed(1) + ' ' + p[1].toFixed(1);
+    }
+    return d + 'Z';
+  }
+  function ringAt(t) {                       // 等值网格圈
+    var vals = [];
+    for (var i = 0; i < AXES.length; i++) vals.push(t);
+    return ringPath(vals);
+  }
+
+  /* ---------------- 网格、刻度、轴标签 ---------------- */
+  var gGrid = document.getElementById('grid'),
+      gPolys = document.getElementById('polys'),
+      gTicks = document.getElementById('ticks'),
+      gAx = document.getElementById('axlabels');
+
+  function buildGrid() {
+    gGrid.textContent = '';
+    [25, 50, 75, 100].forEach(function (t) {
+      gGrid.appendChild(el('path', { d: ringAt(t), class: 'grid' }));
+    });
+    for (var i = 0; i < AXES.length; i++) {
+      var p = pt(R, i, AXES.length);
+      gGrid.appendChild(el('line', { x1: CX, y1: CY, x2: p[0], y2: p[1], class: 'spoke' }));
+    }
+  }
+  /* 刻度和轴标签在滤镜外面：它们要被读，不需要跟着抖 */
+  function buildTicks() {
+    gTicks.textContent = '';
+    [25, 50, 75, 100].forEach(function (t) {
+      var p = pt(R * t / MAX, 0, AXES.length);
+      var tx = el('text', { x: p[0] + 4, y: p[1] + 2.5, class: 'tick' });
+      tx.textContent = t;
+      gTicks.appendChild(tx);
+    });
+  }
+  function buildAxLabels() {
+    gAx.textContent = '';
+    var n = AXES.length;
+    for (var i = 0; i < n; i++) {
+      var a = -Math.PI / 2 + i * (Math.PI * 2 / n);
+      var p = pt(R + 15, i, n), cx = Math.cos(a), sy = Math.sin(a);
+      var t = el('text', {
+        x: p[0], y: p[1] + (sy > 0.7 ? 8 : (sy < -0.7 ? -2 : 3)),
+        class: 'axlabel', 'text-anchor': Math.abs(cx) < 0.2 ? 'middle' : (cx > 0 ? 'start' : 'end')
+      });
+      t.textContent = axisName(i);
+      gAx.appendChild(t);
+    }
+  }
+
+  /* ---------------- 三组多边形：每条 path 自己带滤镜 ----------------
+     滤镜会把元素变成一张离屏图，再按 mix-blend-mode 混进 backdrop。
+     若把滤镜挂在父 g 上，整组会被隔离，子元素就混不到那块不透明底了。 */
+  var legend = document.getElementById('legend');
+  var nodes = DATA.map(function (d) {
+    var area = el('path', { class: 'area ' + d.id, fill: d.color, 'fill-opacity': .34,
+                            filter: 'url(#sketch)' });
+    var line = el('path', { class: 'poly', stroke: d.color, filter: 'url(#sketch)' });
+    gPolys.appendChild(area); gPolys.appendChild(line);
+
+    var lab = document.createElement('label');
+    lab.className = 'chk';
+    /* 图例只显字母：三个勾选项要能排在一行里，侧栏宽度不够放"方案 A" */
+    lab.innerHTML = '<input type="checkbox"' + (d.on ? ' checked' : '') +
+      ' aria-label="' + d.name + '"><i style="background:' + d.color + '"></i>' +
+      d.name.replace('方案 ', '');
+    legend.appendChild(lab);
+    var box = lab.querySelector('input');
+    box.addEventListener('change', function () { d.on = box.checked; render(); });
+    return { area: area, line: line, d: d };
+  });
+
+  var capArea = document.getElementById('capArea');
+
+  function render() {
+    nodes.forEach(function (nd) {
+      var dd = ringPath(ordered(nd.d.v));
+      nd.line.setAttribute('d', dd);
+      nd.area.setAttribute('d', dd);
+      nd.line.setAttribute('class', 'poly' + (nd.d.on ? '' : ' off'));
+      nd.area.setAttribute('class', 'area ' + nd.d.id + (nd.d.on ? '' : ' off'));
+    });
+    buildAxLabels();
+    /* 面积 = 相邻两轴夹的三角形之和，把"看着大"这件事量化出来 */
+    var ar = areaOf(ordered(DATA[0].v)), br = areaOf(ordered(DATA[1].v));
+    capArea.textContent = ar > br
+      ? 'A ' + Math.round(ar) + ' px² > B ' + Math.round(br) + ' px²'
+      : 'B ' + Math.round(br) + ' px² > A ' + Math.round(ar);
+  }
+  function areaOf(vals) {
+    var s = 0, n = vals.length, k = Math.PI * 2 / n;
+    for (var i = 0; i < n; i++) {
+      s += 0.5 * (R * vals[i] / MAX) * (R * vals[(i + 1) % n] / MAX) * Math.sin(k);
+    }
+    return s;
+  }
+
+  /* ---------------- ② 实时改某一项 ---------------- */
+  var sel = document.getElementById('selAxis'),
+      sAxis = document.getElementById('sAxis'),
+      oAxis = document.getElementById('oAxis');
+  AXES.forEach(function (nm, i) {
+    var o = document.createElement('option');
+    o.value = i; o.textContent = nm;
+    sel.appendChild(o);
+  });
+  sel.addEventListener('change', syncSlider);
+  sAxis.addEventListener('input', function () {
+    DATA[0].v[+sel.value] = +sAxis.value;
+    oAxis.textContent = sAxis.value;
+    render();
+  });
+  function syncSlider() {
+    var v = DATA[0].v[+sel.value];
+    sAxis.value = v;
+    oAxis.textContent = v;
+  }
+
+  /* ---------------- ③ 抖动强度 ---------------- */
+  var disp = document.getElementById('disp'),
+      turb = document.getElementById('turb'),
+      sNoise = document.getElementById('sNoise'),
+      oNoise = document.getElementById('oNoise');
+  sNoise.addEventListener('input', function () {
+    var v = parseFloat(sNoise.value);
+    disp.setAttribute('scale', v);
+    /* scale 越大，同一张噪声图被拉得越开，笔画会碎成噪点；
+       所以顺手把噪声频率调高一点，让抖动变细。两个参数得配着调。 */
+    turb.setAttribute('baseFrequency', (0.06 - v * 0.003).toFixed(3));
+    oNoise.textContent = v.toFixed(1);
+  });
+
+  /* ---------------- ④ 轴顺序 ---------------- */
+  document.getElementById('bOrder').addEventListener('click', function () {
+    orderIdx = (orderIdx + 1) % ORDERS.length;
+    document.getElementById('oOrder').textContent = '顺序 ' + (orderIdx + 1);
+    render();
+  });
+
+  /* ---------------- ⑤ 虚线流动：一个能真正停下来的 rAF ----------------
+     不用 CSS animation 是因为它关不掉：display:none 只是隐藏，
+     动画仍在跑；这里由 JS 掌握 offset，暂停时直接停止排帧。 */
+  var sOff = 0, raf = null, flowOn = !REDUCE;
+  var cFlow = document.getElementById('cFlow'), oFlow = document.getElementById('oFlow');
+  function flowLoop() {
+    sOff -= 0.22;                        // 每帧 0.22px：12px 的虚线周期约 55 帧走完
+    for (var i = 0; i < nodes.length; i++) {
+      if (nodes[i].d.on) nodes[i].line.setAttribute('stroke-dashoffset', sOff.toFixed(1));
+    }
+    raf = (flowOn && !document.hidden) ? requestAnimationFrame(flowLoop) : null;
+  }
+  function kickFlow() { if (!raf && flowOn) raf = requestAnimationFrame(flowLoop); }
+  function setFlow(on) {
+    flowOn = on;
+    cFlow.checked = on;
+    oFlow.textContent = on ? '开' : '关';
+    if (!on) {
+      for (var i = 0; i < nodes.length; i++) nodes[i].line.removeAttribute('stroke-dashoffset');
+      if (raf) { cancelAnimationFrame(raf); raf = null; }
+    } else kickFlow();
+  }
+  cFlow.addEventListener('change', function () { setFlow(cFlow.checked); });
+  document.addEventListener('visibilitychange', function () { if (!document.hidden) kickFlow(); });
+
+  buildGrid();
+  buildTicks();
+  syncSlider();
+  render();
+  setFlow(flowOn);
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>磁吸光标 · Widget Lab</title>
+<style>
+  /* ============ 演示画布 ============ */
+  :root {
+    --mx-strength: 0.35;   /* 吸附强度：位移 = 指针偏移 × 该系数 */
+    --mx-radius: 110;      /* 生效半径（px），在 JS 里读取 */
+    --mx-spring: 0.14;     /* 回弹插值系数，越小越"黏" */
+    --bg: #0e1119;
+    --ink: #e9edf6;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0; padding: 26px 22px;
+    background:
+      radial-gradient(120% 90% at 12% -10%, #1d2340 0%, transparent 60%),
+      radial-gradient(100% 80% at 100% 110%, #17303a 0%, transparent 55%),
+      var(--bg);
+    color: var(--ink);
+    font: 14px/1.6 system-ui, "PingFang SC", "Microsoft YaHei", sans-serif;
+    overflow: hidden;
+  }
+  h2 { margin: 0 0 4px; font-size: 15px; letter-spacing: -.2px; }
+  p.note { margin: 0 0 20px; color: #8695b4; font-size: 12.5px; }
+
+  .field {
+    display: flex; flex-wrap: wrap; gap: 22px; align-items: center; justify-content: center;
+    padding: 14px 0 26px;
+  }
+
+  /* ============ 被吸附的元素 ============ */
+  .magnet {
+    position: relative;
+    display: inline-grid; place-items: center;
+    border: 0; cursor: pointer; color: var(--ink);
+    background: rgba(255, 255, 255, .06);
+    border: 1px solid rgba(255, 255, 255, .14);
+    will-change: transform;
+    -webkit-tap-highlight-color: transparent;
+    transition: background .3s, border-color .3s, color .3s;
+  }
+  .magnet:hover { background: rgba(255, 255, 255, .1); border-color: rgba(124, 92, 255, .6); }
+  .magnet.round { width: 74px; height: 74px; border-radius: 50%; }
+  .magnet.pill { padding: 14px 26px; border-radius: 999px; font-weight: 650; letter-spacing: .2px; }
+  .magnet.icon { width: 62px; height: 62px; border-radius: 16px; font-size: 22px; }
+  .magnet.big { padding: 18px 34px; border-radius: 14px; font-size: 15px; font-weight: 700; }
+
+  /* 内层反向位移：外粗内细，看起来像真的有引力 */
+  .magnet > .inner {
+    display: inline-grid; place-items: center;
+    will-change: transform;
+    transition: transform .18s cubic-bezier(.2, .8, .25, 1);
+  }
+  .magnet.round > .inner::after {
+    content: ""; position: absolute; inset: 12px; border-radius: 50%;
+    background: conic-gradient(from 0deg, #7c5cff, #24d3ee, #ff5f9e, #7c5cff);
+    filter: blur(9px); opacity: 0; transition: opacity .35s;
+  }
+  .magnet.round:hover > .inner::after { opacity: .5; }
+  .magnet > .inner { position: relative; }
+
+  /* ============ 调试：吸附半径可视化 ============ */
+  .ring {
+    position: absolute; border-radius: 50%; pointer-events: none;
+    border: 1px dashed rgba(124, 92, 255, .45);
+    opacity: 0; transition: opacity .25s;
+    transform: translate(-50%, -50%);
+  }
+  body.show-ring .ring { opacity: 1; }
+
+  /* ============ 控制面板 ============ */
+  .panel {
+    display: flex; flex-wrap: wrap; gap: 10px 22px; align-items: center;
+    padding: 12px 14px; border-radius: 12px;
+    background: rgba(255, 255, 255, .04); border: 1px solid rgba(255, 255, 255, .1);
+    font-size: 12.5px; color: #a9b6d1;
+  }
+  .panel label { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
+  .panel input[type="range"] { width: 96px; accent-color: #7c5cff; }
+  .panel output { font-variant-numeric: tabular-nums; color: #e9edf6; min-width: 34px; }
+  .panel .chk { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+  .hint { margin-top: 14px; color: #6c7893; font-size: 11.5px; }
+  code { font: 11.5px ui-monospace, Consolas, monospace; color: #b8c6e6; }
+</style>
+</head>
+<body>
+  <h2>磁吸光标 Magnetic Cursor</h2>
+  <p class="note">把指针靠近下面任意元素 —— 它们会被"吸"过来，松开后带惯性弹回，而不是立刻停住。</p>
+
+  <div class="field" id="field">
+    <button class="magnet round" data-r="110"><span class="inner">✦</span></button>
+    <button class="magnet pill" data-r="130"><span class="inner">开始使用</span></button>
+    <button class="magnet icon" data-r="90"><span class="inner">🧲</span></button>
+    <a class="magnet big" data-r="150" href="#" onclick="return false"><span class="inner">订阅 →</span></a>
+    <button class="magnet round" data-r="110"><span class="inner">☺</span></button>
+  </div>
+
+  <div class="panel">
+    <label>吸附强度
+      <input type="range" id="sStrength" min="0" max="0.7" step="0.05" value="0.35">
+      <output id="oStrength">0.35</output>
+    </label>
+    <label>回弹黏度
+      <input type="range" id="sSpring" min="0.04" max="0.35" step="0.01" value="0.14">
+      <output id="oSpring">0.14</output>
+    </label>
+    <label class="chk"><input type="checkbox" id="cRing"> 显示吸附半径</label>
+    <label class="chk"><input type="checkbox" id="cInner" checked> 内层反向位移</label>
+  </div>
+  <p class="hint">试试把强度调到 <code>0.7</code> 看它糊在一起，或调回 <code>0</code> 对比"没有磁吸"时有多廉价。</p>
+
+<script>
+(function () {
+  'use strict';
+
+  var magnets = Array.prototype.slice.call(document.querySelectorAll('.magnet'));
+  var CFG = {
+    strength: 0.35,   // 位移系数
+    spring: 0.14,     // 每帧向目标靠近的比例（lerp 因子）
+    innerRatio: 0.35, // 内层跟随比例
+    useInner: true
+  };
+
+  /* 每个磁体一份状态：目标值 + 当前值 + 速度 */
+  var items = magnets.map(function (el) {
+    var radius = parseFloat(el.dataset.r || 110);
+    var ring = document.createElement('span');
+    ring.className = 'ring';
+    ring.style.width = ring.style.height = radius * 2 + 'px';
+    el.appendChild(ring);
+    return {
+      el: el,
+      inner: el.querySelector('.inner'),
+      ring: ring,
+      r: radius,
+      tx: 0, ty: 0,   // 目标偏移
+      cx: 0, cy: 0,   // 当前偏移
+      vx: 0, vy: 0    // 速度（仅用于表现"甩出"后的余振）
+    };
+  });
+
+  var pointer = { x: -9999, y: -9999, active: false };
+
+  /* 只在指针移动时更新，不在 mousemove 里直接写 transform */
+  window.addEventListener('pointermove', function (e) {
+    if (e.pointerType === 'touch') return;   // 触屏交给 :active 更合适
+    pointer.x = e.clientX; pointer.y = e.clientY; pointer.active = true;
+  }, { passive: true });
+  window.addEventListener('pointerleave', function () {
+    pointer.active = false; pointer.x = pointer.y = -9999;
+  });
+  /* 滚动 / 缩放后 rect 失效：惰性重算 */
+  var dirty = true;
+  window.addEventListener('scroll', function () { dirty = true; }, { passive: true });
+  window.addEventListener('resize', function () { dirty = true; });
+
+  function measure(it) {
+    var b = it.el.getBoundingClientRect();
+    it.bx = b.left + b.width / 2;
+    it.by = b.top + b.height / 2;
+    it.bw = b.width; it.bh = b.height;
+  }
+
+  var raf = null, last = 0;
+  function loop(t) {
+    var dt = Math.min(64, t - (last || t)); last = t;
+    var k = dt / 16.6667;                    // 归一到 60fps，高刷屏不过冲
+
+    if (dirty) { items.forEach(measure); dirty = false; }
+
+    var moving = false;
+    for (var i = 0; i < items.length; i++) {
+      var it = items[i];
+      var dx = pointer.x - it.bx, dy = pointer.y - it.by;
+      var dist = Math.hypot(dx, dy);
+
+      if (pointer.active && dist < it.r) {
+        /* 距离越远吸得越弱：用 1 - dist/r 做衰减，避免边缘突跳 */
+        var falloff = 1 - dist / it.r;
+        falloff = falloff * falloff;         // 平方衰减更柔和
+        it.tx = dx * CFG.strength * falloff;
+        it.ty = dy * CFG.strength * falloff;
+      } else {
+        it.tx = 0; it.ty = 0;
+      }
+
+      /* 临界阻尼弹簧：向目标插值，剩余距离小于 0.05 视为静止 */
+      var ease = 1 - Math.pow(1 - CFG.spring, k);
+      it.cx += (it.tx - it.cx) * ease;
+      it.cy += (it.ty - it.cy) * ease;
+
+      if (Math.abs(it.tx - it.cx) > 0.05 || Math.abs(it.ty - it.cy) > 0.05) moving = true;
+      if (Math.abs(it.cx) < 0.02 && Math.abs(it.cy) < 0.02) { it.cx = 0; it.cy = 0; }
+
+      it.el.style.transform = 'translate3d(' + it.cx.toFixed(2) + 'px,' + it.cy.toFixed(2) + 'px,0)';
+      if (CFG.useInner) {
+        it.inner.style.transform = 'translate3d(' +
+          (it.cx * CFG.innerRatio).toFixed(2) + 'px,' + (it.cy * CFG.innerRatio).toFixed(2) + 'px,0)';
+      } else {
+        it.inner.style.transform = '';
+      }
+      /* 环跟住元素中心 */
+      it.ring.style.left = it.bw / 2 + it.cx + 'px';
+      it.ring.style.top = it.bh / 2 + it.cy + 'px';
+    }
+
+    /* 静止且无指针时停掉 rAF，省 CPU；下一次 pointermove 再唤醒 */
+    if (moving || pointer.active) raf = requestAnimationFrame(loop);
+    else raf = null;
+  }
+  function kick() { if (!raf) { last = 0; raf = requestAnimationFrame(loop); } }
+  window.addEventListener('pointermove', kick, { passive: true });
+  window.addEventListener('pointerdown', function (e) {
+    /* 触屏：按下时把该元素当作磁体临时吸附一次 */
+    var el = e.target.closest && e.target.closest('.magnet');
+    if (!el || e.pointerType !== 'touch') return;
+    var it = items.filter(function (x) { return x.el === el; })[0];
+    if (!it) return;
+    measure(it);
+    var b = el.getBoundingClientRect();
+    it.tx = (e.clientX - it.bx) * CFG.strength;
+    it.ty = (e.clientY - it.by) * CFG.strength;
+    kick();
+  }, { passive: true });
+  window.addEventListener('pointerup', function () {
+    items.forEach(function (it) { it.tx = 0; it.ty = 0; });
+    kick();
+  }, { passive: true });
+  kick();
+
+  /* ---------------- 控制面板 ---------------- */
+  function bindRange(id, outId, key, fmt) {
+    var inp = document.getElementById(id), out = document.getElementById(outId);
+    inp.addEventListener('input', function () {
+      CFG[key] = parseFloat(inp.value);
+      out.textContent = fmt ? fmt(CFG[key]) : inp.value;
+      kick();
+    });
+  }
+  bindRange('sStrength', 'oStrength', 'strength');
+  bindRange('sSpring', 'oSpring', 'spring');
+  document.getElementById('cRing').addEventListener('change', function () {
+    document.body.classList.toggle('show-ring', this.checked);
+    kick();
+  });
+  document.getElementById('cInner').addEventListener('change', function () {
+    CFG.useInner = this.checked; kick();
+  });
+})();
+</script>
+</body>
+</html>

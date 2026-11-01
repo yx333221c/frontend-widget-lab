@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>液态黏粘菜单 · Widget Lab</title>
+<style>
+  :root {
+    --bg: #0e1119;
+    --ink: #e9edf6;
+    --accent: #ff5f9e;
+    --cx: 160px;   /* FAB 圆心，JS 里的 CX/CY 必须与之一致 */
+    --cy: 150px;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 22px 20px;
+    background:
+      radial-gradient(120% 90% at 14% -12%, #2a1524 0%, transparent 58%),
+      radial-gradient(110% 80% at 100% 112%, #141d2b 0%, transparent 55%),
+      var(--bg);
+    color: var(--ink);
+    font: 14px/1.6 system-ui, "PingFang SC", "Microsoft YaHei", sans-serif;
+  }
+  h2 { margin: 0 0 2px; font-size: 15px; letter-spacing: -.2px; }
+  p.note { margin: 0 0 10px; color: #8695b4; font-size: 12.5px; }
+  p.hint { margin: 8px 0 0; color: #6c7893; font-size: 11px; line-height: 1.5; }
+
+  /* ============ 舞台：本身不能进滤镜 ============
+     边框和底色留在滤镜外。阈值化会抹掉 alpha 低于 0.5 的东西，
+     这里的底色是 rgba(255,255,255,.03)，套进去就整片消失。 */
+  .stage {
+    position: relative;
+    width: 320px; height: 220px;
+    border-radius: 14px;
+    background: rgba(255, 255, 255, .03);
+    border: 1px solid rgba(255, 255, 255, .1);
+    overflow: hidden;
+  }
+  .stage .tag {
+    position: absolute; right: 8px; top: 7px;
+    font: 10.5px ui-monospace, Consolas, monospace; color: #6c7893;
+  }
+
+  /* ============ 黏合层：滤镜挂在容器上 ============ */
+  .goo {
+    position: absolute; inset: 0;
+    filter: url(#goo);
+    -webkit-filter: url(#goo);
+  }
+  body.nofilter .goo { filter: none; -webkit-filter: none; }
+  .goo .off { position: absolute; left: var(--cx); top: var(--cy); }
+  .goo i {
+    position: absolute; left: 0; top: 0; border-radius: 50%;
+    background: var(--accent);
+    will-change: transform;
+  }
+  .goo .fab { width: 60px; height: 60px; margin: -30px 0 0 -30px; }
+  .goo .it { width: 46px; height: 46px; margin: -23px 0 0 -23px; }
+
+  /* ============ 图标层：在滤镜之外 ============
+     笔画宽度远小于模糊半径，进滤镜必被抹掉，所以单独一层。
+     位置由同一个循环写同一组 transform，两层严格同步。 */
+  .glyphs { position: absolute; inset: 0; pointer-events: none; }
+  .glyphs .g {
+    position: absolute; left: var(--cx); top: var(--cy);
+    width: 46px; height: 46px; margin: -23px 0 0 -23px;
+    display: grid; place-items: center;
+    color: #3d0020; font-size: 18px; font-weight: 800; opacity: 0;
+  }
+  .glyphs .g.fab {
+    width: 60px; height: 60px; margin: -30px 0 0 -30px;
+    font-size: 28px; color: #fff; opacity: 1;
+  }
+
+  /* 命中区也在滤镜外：滤镜层只管看，不管点 */
+  .hit { position: absolute; inset: 0; }
+  .hit button {
+    position: absolute; left: var(--cx); top: var(--cy);
+    width: 46px; height: 46px; margin: -23px 0 0 -23px;
+    padding: 0; border: 0; border-radius: 50%; background: transparent; cursor: pointer;
+  }
+  .hit button.fab { width: 60px; height: 60px; margin: -30px 0 0 -30px; }
+  .hit button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+
+  .toast {
+    position: absolute; left: 50%; bottom: 7px; transform: translateX(-50%);
+    padding: 4px 10px; border-radius: 999px; white-space: nowrap;
+    background: rgba(0, 0, 0, .55); border: 1px solid rgba(255, 95, 158, .4);
+    color: #ffd9e8; font-size: 11.5px; opacity: 0; transition: opacity .2s;
+  }
+  .toast.on { opacity: 1; }
+
+  /* ============ 控制面板 ============ */
+  .panel {
+    display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center;
+    margin-top: 10px; padding: 8px 11px; border-radius: 12px;
+    background: rgba(255, 255, 255, .04); border: 1px solid rgba(255, 255, 255, .1);
+    font-size: 12px; color: #a9b6d1;
+  }
+  .panel .grp { display: flex; align-items: center; gap: 7px; white-space: nowrap; }
+  .panel input[type="range"] { width: 84px; accent-color: var(--accent); }
+  .panel input[type="checkbox"] { accent-color: var(--accent); margin: 0; }
+  .panel output { color: var(--ink); font-variant-numeric: tabular-nums; min-width: 26px; }
+  .panel button {
+    cursor: pointer; color: var(--ink); font: 12px/1 system-ui, sans-serif;
+    padding: 6px 11px; border-radius: 7px;
+    background: rgba(255, 95, 158, .14); border: 1px solid rgba(255, 95, 158, .45);
+  }
+  .panel button:active { transform: translateY(1px); }
+</style>
+</head>
+<body>
+  <h2>液态黏粘菜单 Gooey Menu</h2>
+  <p class="note">点中间的圆钮展开。指针停在某个子项上，它会往外顶，相邻两项被拖着跟过去，之间拉出黏丝。</p>
+
+  <div class="stage" id="stage">
+    <div class="goo" aria-hidden="true">
+      <span class="off"><i class="fab" id="fabDot"></i></span>
+      <span class="off"><i class="it" id="it0"></i></span>
+      <span class="off"><i class="it" id="it1"></i></span>
+      <span class="off"><i class="it" id="it2"></i></span>
+      <span class="off"><i class="it" id="it3"></i></span>
+      <span class="off"><i class="it" id="it4"></i></span>
+    </div>
+    <div class="glyphs" id="glyphs" aria-hidden="true"><span class="g fab" id="fabG">＋</span></div>
+    <div class="hit" id="hit"></div>
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    <span class="tag" id="tag">σ 10 · 连住上限约 13.5px</span>
+  </div>
+
+  <div class="panel">
+    <button id="bToggle" type="button" aria-expanded="false">展开</button>
+    <label class="grp">模糊半径
+      <input type="range" id="sBlur" min="0" max="16" step="1" value="10">
+      <output id="oBlur">10</output>
+    </label>
+    <label class="grp">扯动
+      <input type="range" id="sPull" min="0" max="1" step="0.05" value="0.8">
+      <output id="oPull">0.8</output>
+    </label>
+    <label class="grp"><input type="checkbox" id="cOff"> 关掉滤镜看真相</label>
+  </div>
+  <p class="hint">模糊拉到 0，两个圆只是相碰；拉到 16，整坨糊成一团。黏丝只在中间那几档出现。最后一项勾上能看到层是分开的。</p>
+
+  <!-- 滤镜定义要留在 DOM 里，filter: url(#goo) 才解析得到 -->
+  <svg width="0" height="0" aria-hidden="true" style="position:absolute">
+    <defs>
+      <filter id="goo" x="-20%" y="-20%" width="140%" height="140%"
+              color-interpolation-filters="sRGB">
+        <feGaussianBlur in="SourceGraphic" stdDeviation="10" result="b"/>
+        <feColorMatrix in="b" mode="matrix"
+          values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 20 -10" result="g"/>
+        <feBlend in="SourceGraphic" in2="g"/>
+      </filter>
+    </defs>
+  </svg>
+
+<script>
+(function () {
+  'use strict';
+
+  var CX = 160, CY = 150;      // FAB 圆心，和 CSS 的 --cx/--cy 对齐
+  var R = 84;                  // 子项落位半径
+  var DUR = 460, STEP = 55;    // 单项时长与逐位错峰
+  var PULL_R = 58;             // 判定"悬停在哪颗"的距离
+  var POP = 14;                // 被指的那颗往外顶多少
+  var DRAG = 10;               // 邻居被拖着跟过去多少
+  var K = 0.8;                 // 扯动强度，面板可调
+  var open = false, startAt = 0, animUntil = 0, raf = null;
+  var reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  var LABELS = ['首页', '收藏', '新建', '搜索', '更多'];
+  var GLYPH = ['⌂', '♥', '✎', '⌕', '☰'];
+
+  var stage = document.getElementById('stage');
+  var fabDot = document.getElementById('fabDot');
+  var fabG = document.getElementById('fabG');
+  var toastEl = document.getElementById('toast');
+  var tagEl = document.getElementById('tag');
+  var glyphs = document.getElementById('glyphs');
+  var hit = document.getElementById('hit');
+  var blurEl = document.querySelector('#goo feGaussianBlur');
+
+  /* 半圈分布：从左水平起，每 45° 一个，最后一个落在右水平方向 */
+  var items = [];
+  for (var i = 0; i < 5; i++) {
+    var a = (180 + i * 45) * Math.PI / 180;
+    var lbl = document.createElement('span');
+    lbl.className = 'g';
+    lbl.textContent = GLYPH[i];
+    glyphs.appendChild(lbl);
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.setAttribute('aria-label', LABELS[i]);
+    hit.appendChild(btn);
+    items.push({
+      ux: Math.cos(a), uy: Math.sin(a),           // 单位方向，落位 = 方向 × R
+      t: 0, ox: 0, oy: 0, tx: 0, ty: 0, delay: i * STEP,
+      dot: document.getElementById('it' + i), lbl: lbl, btn: btn
+    });
+  }
+
+  /* FAB 的按钮排在子项之后，命中时盖在上面 */
+  var fabBtn = document.createElement('button');
+  fabBtn.type = 'button';
+  fabBtn.className = 'fab';
+  fabBtn.setAttribute('aria-label', '展开菜单');
+  hit.appendChild(fabBtn);
+  fabBtn.addEventListener('click', function () { setOpen(!open); });
+
+  var ptr = { x: -999, y: -999, in: false };
+  stage.addEventListener('pointermove', function (e) {
+    var b = stage.getBoundingClientRect();
+    ptr.x = e.clientX - b.left; ptr.y = e.clientY - b.top; ptr.in = true;
+    kick();
+  }, { passive: true });
+  stage.addEventListener('pointerleave', function () { ptr.in = false; kick(); });
+
+  function place(el, x, y) {
+    el.style.transform = 'translate3d(' + x.toFixed(1) + 'px,' + y.toFixed(1) + 'px,0)';
+  }
+
+  /* 算每颗的目标扯动量。输入一律是"未位移的基准位置"：
+     拿带位移的实时位置再算一遍是正反馈，圆会被拽着越跑越远。 */
+  function targets() {
+    var h = -1, hd = 1e9;
+    if (ptr.in && K > 0) {
+      for (var i = 0; i < items.length; i++) {
+        var it = items[i];
+        var d = Math.hypot(ptr.x - (CX + it.ux * R), ptr.y - (CY + it.uy * R));
+        if (d < PULL_R && d < hd) { hd = d; h = i; }
+      }
+    }
+    for (var k = 0; k < items.length; k++) {
+      var q = items[k];
+      if (h < 0 || !open) { q.tx = 0; q.ty = 0; continue; }
+      var s = 1 - hd / PULL_R; s = s * s;            // 平方衰减，影响圈边界不突跳
+      if (k === h) {
+        q.tx = q.ux * POP * s * K;                   // 被指的沿半径往外顶
+        q.ty = q.uy * POP * s * K;
+      } else {
+        var step = Math.abs(k - h);                  // 隔得越远被带得越少
+        if (step > 2) { q.tx = 0; q.ty = 0; continue; }
+        var vx = items[h].ux - q.ux, vy = items[h].uy - q.uy;   // 指向被指那颗
+        var m = Math.hypot(vx, vy);
+        var w = (step === 1 ? 1 : 0.45) * DRAG * s * K;
+        q.tx = vx / m * w;
+        q.ty = vy / m * w;
+      }
+    }
+  }
+
+  function frame(now) {
+    var need = now < animUntil;
+    targets();
+
+    for (var i = 0; i < items.length; i++) {
+      var it = items[i];
+      if (reduced) {
+        it.t = open ? 1 : 0;
+      } else {
+        /* 展开正序错峰、收起反序，两个方向都由时间轴直接算，不留计时器 */
+        var p = open ? (now - startAt - it.delay) : (now - startAt - (4 - i) * STEP);
+        if (p < 0) p = 0;
+        it.t = open ? Math.min(1, p / DUR) : Math.max(0, 1 - p / DUR);
+      }
+      var e = 1 - Math.pow(1 - it.t, 3);            // ease-out cubic
+
+      /* 扯动量每帧向目标走 30%，跟手但不抖 */
+      var dx = it.tx - it.ox, dy = it.ty - it.oy;
+      if (Math.abs(dx) > 0.05 || Math.abs(dy) > 0.05) need = true;
+      it.ox += dx * 0.3; it.oy += dy * 0.3;
+
+      var x = it.ux * R * e + it.ox, y = it.uy * R * e + it.oy;
+      place(it.dot, x, y);
+      place(it.lbl, x, y);
+      place(it.btn, x, y);
+      it.lbl.style.opacity = (it.t * it.t).toFixed(2);
+      it.btn.disabled = !open;
+    }
+
+    /* 停稳且过了动画窗口就不排下一帧，空闲时不占 CPU */
+    if (need) raf = requestAnimationFrame(frame);
+    else raf = null;
+  }
+  function kick() { if (!raf) raf = requestAnimationFrame(frame); }
+
+  function setOpen(v) {
+    open = v;
+    startAt = performance.now();
+    if (reduced) {
+      items.forEach(function (it) { it.t = v ? 1 : 0; it.lbl.style.opacity = v ? 1 : 0; });
+    } else {
+      animUntil = startAt + DUR + 4 * STEP + 150;
+    }
+    var b = document.getElementById('bToggle');
+    b.textContent = v ? '收起' : '展开';
+    b.setAttribute('aria-expanded', String(v));
+    /* FAB 只在视觉上缩一点，用 transform，黏合层和图标层同步缩放 */
+    fabDot.style.transform = v ? 'scale(.74)' : '';
+    fabG.style.transform = v ? 'scale(.74)' : '';
+    fabG.textContent = v ? '×' : '＋';
+    kick();
+  }
+  document.getElementById('bToggle').addEventListener('click', function () { setOpen(!open); });
+  items.forEach(function (it, i) {
+    it.btn.addEventListener('click', function () {
+      toastEl.textContent = '点了「' + LABELS[i] + '」';
+      toastEl.classList.add('on');
+      setTimeout(function () { toastEl.classList.remove('on'); }, 1200);
+    });
+  });
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && open) setOpen(false);
+  });
+
+  /* ---------------- 面板：改的是滤镜本身 ---------------- */
+  var sBlur = document.getElementById('sBlur'), oBlur = document.getElementById('oBlur');
+  sBlur.addEventListener('input', function () {
+    blurEl.setAttribute('stdDeviation', sBlur.value);
+    oBlur.textContent = sBlur.value;
+    tagEl.textContent = 'σ ' + sBlur.value + ' · 阈值 alpha 0.50';
+    kick();
+  });
+  var sPull = document.getElementById('sPull'), oPull = document.getElementById('oPull');
+  sPull.addEventListener('input', function () {
+    K = parseFloat(sPull.value);
+    oPull.textContent = sPull.value;
+    kick();
+  });
+  document.getElementById('cOff').addEventListener('change', function () {
+    document.body.classList.toggle('nofilter', this.checked);
+  });
+
+  /* 开场自动展开一次：首屏要直接看见动效，不要求用户先点 */
+  animUntil = performance.now() + 80;
+  kick();
+  if (!reduced) setTimeout(function () { setOpen(true); }, 420);
+})();
+</script>
+</body>
+</html>

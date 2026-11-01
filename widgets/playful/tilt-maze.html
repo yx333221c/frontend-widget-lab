@@ -1,0 +1,513 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>倾斜滚球迷宫 · Widget Lab</title>
+<style>
+  :root {
+    --accent: #35d18e;
+    --ink: #e9edf6;
+    --dim: #8695b4;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 22px 20px;
+    background:
+      radial-gradient(110% 90% at 6% -14%, #16283a 0%, transparent 58%),
+      radial-gradient(90% 90% at 100% 116%, #1b2a24 0%, transparent 55%),
+      #0e1119;
+    color: var(--ink);
+    font: 14px/1.5 system-ui, "PingFang SC", "Microsoft YaHei", sans-serif;
+  }
+  h2 { margin: 0 0 2px; font-size: 15px; line-height: 1.3; letter-spacing: -.2px; }
+  p.note { margin: 0 0 8px; color: var(--dim); font-size: 12.5px; }
+
+  /* touch-action:none 是让 pointermove 在触屏上连续派发的前提（见教学 §6） */
+  .stage {
+    position: relative; height: 244px; overflow: hidden;
+    border-radius: 12px; touch-action: none;
+    background: rgba(255, 255, 255, .03);
+    border: 1px solid rgba(255, 255, 255, .1);
+    cursor: crosshair;
+  }
+  .stage canvas { position: absolute; inset: 0; display: block; }
+  .hud {
+    position: absolute; left: 10px; top: 8px; z-index: 2; pointer-events: none;
+    font: 11.5px/1.45 ui-monospace, Consolas, monospace; color: var(--dim);
+  }
+  .hud b { color: var(--accent); font-weight: 600; }
+  .hud .win { color: #bff0d6; }
+  .veil {
+    position: absolute; inset: 0; z-index: 3; display: grid; place-items: center;
+    background: rgba(14, 17, 25, .72); color: var(--ink);
+    font-size: 13px; letter-spacing: .3px; text-align: center;
+    opacity: 0; pointer-events: none; transition: opacity .25s;
+  }
+  .veil.on { opacity: 1; }
+
+  .panel {
+    margin-top: 8px; padding: 8px 12px; border-radius: 12px;
+    background: rgba(255, 255, 255, .04); border: 1px solid rgba(255, 255, 255, .1);
+    display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center;
+    font-size: 12px; color: #a9b6d1;
+  }
+  .panel label { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+  .panel input[type="range"] { width: 74px; accent-color: var(--accent); }
+  .panel output { font: 11px/1 ui-monospace, Consolas, monospace; color: var(--ink); min-width: 34px; }
+  .chk { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+  .chk input { accent-color: var(--accent); }
+  .panel button {
+    padding: 4px 11px; border-radius: 8px; cursor: pointer; font-size: 12px;
+    color: var(--ink); background: rgba(53, 209, 142, .14);
+    border: 1px solid rgba(53, 209, 142, .4);
+  }
+  .panel button:hover { background: rgba(53, 209, 142, .24); }
+  p.hint { margin: 6px 0 0; color: #6c7893; font-size: 11.5px; }
+  code { font: 11.5px ui-monospace, Consolas, monospace; color: #b8c6e6; }
+</style>
+</head>
+<body>
+  <h2>倾斜滚球迷宫 Tilt Maze</h2>
+  <p class="note">把指针在盘面里偏移 = 给平台倾斜；键盘方向键同样有效。让球滚进绿色终点格。</p>
+
+  <div class="stage" id="stage">
+    <canvas id="cv" aria-label="倾斜迷宫演示画布" role="img"></canvas>
+    <div class="hud" id="hud">第 <b>1</b> 关 · v <b>0</b> · 子步 <b>1</b></div>
+    <div class="veil" id="veil">已静止（rAF 停止）<br>移动指针或按方向键开始</div>
+  </div>
+
+  <div class="panel">
+    <label>倾角强度
+      <input type="range" id="sTilt" min="200" max="2200" step="50" value="1100" aria-label="最大倾斜加速度">
+      <output id="oTilt">1100</output>
+    </label>
+    <label>弹性
+      <input type="range" id="sRest" min="0" max="0.9" step="0.05" value="0.3" aria-label="碰撞恢复系数">
+      <output id="oRest">0.30</output>
+    </label>
+    <label>摩擦
+      <input type="range" id="sFric" min="0" max="8" step="0.2" value="2.4" aria-label="摩擦系数每秒">
+      <output id="oFric">2.4</output>
+    </label>
+    <label class="chk"><input type="checkbox" id="cVec"> 显示重力矢量</label>
+    <label class="chk"><input type="checkbox" id="cPause"> 静止（停 rAF）</label>
+    <button type="button" id="bReset">重置小球</button>
+    <button type="button" id="bRand">随机迷宫</button>
+  </div>
+  <p class="hint">摩擦换成 <code>v *= 0.98</code> 会随刷新率变手感；弹性拉到 <code>0.9</code> 试试球在墙角发抖。</p>
+
+<script>
+(function () {
+  'use strict';
+
+  /* ================= 迷宫数据 ================= */
+  var COLS = 11, ROWS = 7, CELL = 38;          // 逻辑坐标系：418 × 266
+  var LW = COLS * CELL, LH = ROWS * CELL;
+  var START = { c: 1, r: 1 }, GOAL = { c: 9, r: 5 };
+
+  /* 第 1 关是手工图：'#' 是墙，其它是地面。唯一事实来源，可直接手数验证 */
+  var LEVEL1 = [
+    '###########',
+    '#S...#....#',
+    '#.#.##.##.#',
+    '#.#.....#.#',
+    '###.###.#.#',
+    '#....#...G#',
+    '###########'
+  ];
+
+  function gridFromStrings(arr) {
+    var g = [];
+    for (var r = 0; r < ROWS; r++) {
+      var row = [];
+      for (var c = 0; c < COLS; c++) row.push(arr[r].charAt(c) === '#' ? 1 : 0);
+      g.push(row);
+    }
+    return g;
+  }
+
+  /* 随机迷宫：在「奇偶格点」上做递归回溯，天然保证所有格点连通 -> 必定可通关 */
+  function randomGrid() {
+    var g = [], r, c;
+    for (r = 0; r < ROWS; r++) { g.push([]); for (c = 0; c < COLS; c++) g[r].push(1); }
+    var stack = [[1, 1]]; g[1][1] = 0;
+    var DIRS = [[0, 2], [0, -2], [2, 0], [-2, 0]];
+    while (stack.length) {
+      var cur = stack[stack.length - 1], cr = cur[0], cc = cur[1], opts = [];
+      for (var i = 0; i < 4; i++) {
+        var nr = cr + DIRS[i][0], nc = cc + DIRS[i][1];
+        if (nr > 0 && nr < ROWS - 1 && nc > 0 && nc < COLS - 1 && g[nr][nc] === 1) {
+          opts.push([nr, nc, cr + DIRS[i][0] / 2, cc + DIRS[i][1] / 2]);
+        }
+      }
+      if (!opts.length) { stack.pop(); continue; }
+      var pick = opts[(Math.random() * opts.length) | 0];
+      g[pick[2]][pick[3]] = 0; g[pick[0]][pick[1]] = 0;
+      stack.push([pick[0], pick[1]]);
+    }
+    /* 再随机打通几面墙，把「完美迷宫」变成有环的迷宫：球更不容易卡死 */
+    var tries = 0;
+    while (tries++ < 240) {
+      r = 1 + ((Math.random() * (ROWS - 2)) | 0);
+      c = 1 + ((Math.random() * (COLS - 2)) | 0);
+      if (!g[r][c]) continue;
+      var open = 0;
+      if (c > 0 && !g[r][c - 1]) open++;
+      if (c < COLS - 1 && !g[r][c + 1]) open++;
+      if (r > 0 && !g[r - 1][c]) open++;
+      if (r < ROWS - 1 && !g[r + 1][c]) open++;
+      if (open >= 2) g[r][c] = 0;
+    }
+    g[START.r][START.c] = 0; g[GOAL.r][GOAL.c] = 0;
+    return g;
+  }
+
+  /* ================= 物理参数 ================= */
+  /* 真机倾角（可选通路）：iOS 13+ 必须由用户手势触发授权，所以挂在按钮上 */
+  var CFG = {
+    G: 1100,        // px/s²：满偏时的倾斜加速度
+    rest: 0.3,      // 恢复系数
+    mu: 2.4,        // 摩擦系数（每秒），走 v -= v*mu*dt
+    r: 11,          // 球半径（逻辑像素）
+    maxV: 900,      // 速度上限：同时限制子步数量
+    pause: false,
+    showVec: false,
+    level: null     // {x,y}：deviceorientation 的归一化倾角，叠在指针倾角上
+  };
+
+  var ball = { x: 0, y: 0, vx: 0, vy: 0 };
+  var walls = [], buckets = [], stamp = [], gen = 0;
+  var grid = gridFromStrings(LEVEL1), level = 1, won = false, winAt = 0;
+
+  /* 把 '#' 横向合并成长条矩形：碰撞集合不变，矩形数量与绘制调用都更少 */
+  function buildWalls() {
+    walls = [];
+    for (var r = 0; r < ROWS; r++) {
+      var c = 0;
+      while (c < COLS) {
+        if (grid[r][c]) {
+          var c0 = c;
+          while (c < COLS && grid[r][c]) c++;
+          walls.push({ x: c0 * CELL, y: r * CELL, w: (c - c0) * CELL, h: CELL });
+        } else c++;
+      }
+    }
+    /* 空间索引：每个格子记一份「可能压到它的墙」下标，查询时只遍历常数个 */
+    buckets = new Array(ROWS * COLS);
+    for (var i = 0; i < walls.length; i++) {
+      var w = walls[i], rr = w.y / CELL | 0;
+      for (var cc = w.x / CELL | 0; cc < (w.x + w.w) / CELL; cc++) {
+        var k = rr * COLS + cc;
+        (buckets[k] || (buckets[k] = [])).push(i);
+      }
+    }
+    stamp = new Array(walls.length);
+  }
+  function resetBall() {
+    ball.x = START.c * CELL + CELL / 2;
+    ball.y = START.r * CELL + CELL / 2;
+    ball.vx = ball.vy = 0;
+  }
+  function loadMaze(g, nextLevel) {
+    grid = g; buildWalls(); resetBall();
+    won = false; if (nextLevel) level++;
+    draw(); showHud();
+  }
+
+  /* 查询候选墙：用 generation 计数去重，避免每次 new Set / new Array */
+  var cand = [];
+  function gather(x, y, rad) {
+    gen++; cand.length = 0;
+    var r0 = Math.max(0, ((y - rad) / CELL) | 0), r1 = Math.min(ROWS - 1, ((y + rad) / CELL) | 0);
+    var c0 = Math.max(0, ((x - rad) / CELL) | 0), c1 = Math.min(COLS - 1, ((x + rad) / CELL) | 0);
+    for (var r = r0; r <= r1; r++) {
+      for (var c = c0; c <= c1; c++) {
+        var b = buckets[r * COLS + c]; if (!b) continue;
+        for (var i = 0; i < b.length; i++) {
+          var id = b[i];
+          if (stamp[id] !== gen) { stamp[id] = gen; cand.push(id); }
+        }
+      }
+    }
+  }
+  function hits(w) {
+    var r = CFG.r;
+    return ball.x + r > w.x && ball.x - r < w.x + w.w &&
+           ball.y + r > w.y && ball.y - r < w.y + w.h;
+  }
+  /* 分轴解算：X 位移完只处理 X 方向的重叠，Y 同理。
+     推出方向 = 运动方向的相反侧；vx/vy 恰好为 0 时按球心离哪条边近就近推出，
+     否则球会永久嵌在墙里（既不推也不反弹）。 */
+  function resolveX() {
+    var r = CFG.r;
+    gather(ball.x, ball.y, r);
+    for (var i = 0; i < cand.length; i++) {
+      var w = walls[cand[i]];
+      if (!hits(w)) continue;
+      if (ball.vx > 0) { ball.x = w.x - r; spark(w.x, ball.y); }
+      else if (ball.vx < 0) { ball.x = w.x + w.w + r; spark(w.x + w.w, ball.y); }
+      else ball.x = (ball.x < w.x + w.w / 2) ? w.x - r : w.x + w.w + r;
+      ball.vx = -ball.vx * CFG.rest;              // 法线方向速度反向并衰减
+    }
+  }
+  function resolveY() {
+    var r = CFG.r;
+    gather(ball.x, ball.y, r);
+    for (var i = 0; i < cand.length; i++) {
+      var w = walls[cand[i]];
+      if (!hits(w)) continue;
+      if (ball.vy > 0) { ball.y = w.y - r; spark(ball.x, w.y); }
+      else if (ball.vy < 0) { ball.y = w.y + w.h + r; spark(ball.x, w.y + w.h); }
+      else ball.y = (ball.y < w.y + w.h / 2) ? w.y - r : w.y + w.h + r;
+      ball.vy = -ball.vy * CFG.rest;
+    }
+  }
+  var sparks = [];
+  function spark(x, y) {
+    sparks.push({ x: x, y: y, t: 0 });
+    if (sparks.length > 20) { sparks[0] = sparks[sparks.length - 1]; sparks.pop(); }
+  }
+
+  /* ================= 倾斜输入 ================= */
+  var tilt = { x: 0, y: 0 };        // 归一化 -1..1，乘以 G 得到加速度
+  var hasPoint = false;
+  var stage = document.getElementById('stage');
+  var keys = {};
+  function setPoint(e) {
+    var b = stage.getBoundingClientRect();
+    var cx = b.left + b.width / 2, cy = b.top + b.height / 2;
+    tilt.x = clamp((e.clientX - cx) / (b.width / 2), -1, 1);
+    tilt.y = clamp((e.clientY - cy) / (b.height / 2), -1, 1);
+    hasPoint = true; wake();
+  }
+  function clamp(v, a, b) { return v < a ? a : v > b ? b : v; }
+  stage.addEventListener('pointermove', setPoint, { passive: true });
+  stage.addEventListener('pointerdown', setPoint, { passive: true });
+  stage.addEventListener('pointerleave', function () { hasPoint = false; tilt.x = tilt.y = 0; wake(); });
+  window.addEventListener('keydown', function (e) {
+    var k = e.key;
+    if (k !== 'ArrowLeft' && k !== 'ArrowRight' && k !== 'ArrowUp' && k !== 'ArrowDown') return;
+    e.preventDefault(); keys[k] = 1; hasPoint = false; wake();
+  });
+  window.addEventListener('keyup', function (e) { keys[e.key] = 0; wake(); });
+  function keyTilt() {
+    var x = (keys.ArrowRight ? 1 : 0) - (keys.ArrowLeft ? 1 : 0);
+    var y = (keys.ArrowDown ? 1 : 0) - (keys.ArrowUp ? 1 : 0);
+    return x || y ? { x: x, y: y } : null;
+  }
+  /* 三条输入通路汇成一个归一化倾角：键盘优先，其次指针，真机倾角叠加在两者之上 */
+  function readTilt() {
+    var kt = keyTilt(), kx = 0, ky = 0;
+    if (kt) { kx = kt.x; ky = kt.y; }
+    else if (hasPoint) { kx = tilt.x; ky = tilt.y; }
+    if (CFG.level) {
+      kx = clamp(kx + CFG.level.x, -1, 1);
+      ky = clamp(ky + CFG.level.y, -1, 1);
+    }
+    return { x: kx, y: ky };
+  }
+
+  /* deviceorientation 是可选通路：桌面多为 null，iOS 13+ 要用户手势授权，所以挂在 pointerdown 上 */
+  var BASE = null, orientOn = false;
+  function onOrient(e) {
+    if (e.gamma === null && e.beta === null) return;        // 拿不到数据就当没有传感器
+    if (BASE === null) { BASE = { g: e.gamma || 0, b: e.beta || 0 }; return; }
+    CFG.level = {
+      x: clamp((e.gamma - BASE.g) / 30, -1, 1),             // 左右倾 gamma：-90..90
+      y: clamp((e.beta - BASE.b) / 30, -1, 1)               // 前后倾 beta：-180..180，要减基准角
+    };
+    wake();
+  }
+  window.addEventListener('pointerdown', function () {
+    if (orientOn || !window.DeviceOrientationEvent) return;
+    orientOn = true;
+    if (typeof DeviceOrientationEvent.requestPermission === 'function') {
+      DeviceOrientationEvent.requestPermission().then(function (s) {
+        if (s === 'granted') window.addEventListener('deviceorientation', onOrient);
+      }, function () {});
+    } else {
+      window.addEventListener('deviceorientation', onOrient);
+    }
+  }, { passive: true });
+
+  /* ================= 步进 ================= */
+  var lastSub = 1;
+  function step(dtS) {
+    var t = readTilt();
+    var gx = t.x * CFG.G, gy = t.y * CFG.G;        // 倾角 -> 重力分量
+
+    /* 摩擦：v -= v*mu*dt 与帧率无关；写成 v *= 0.98 就变成「每帧」衰减 */
+    var f = Math.max(0, 1 - CFG.mu * dtS);
+    ball.vx += gx * dtS; ball.vy += gy * dtS;
+    ball.vx *= f; ball.vy *= f;
+    var sp = Math.hypot(ball.vx, ball.vy);
+    if (sp > CFG.maxV) { ball.vx *= CFG.maxV / sp; ball.vy *= CFG.maxV / sp; }
+
+    /* 子步进：单帧位移超过半个半径就必须细分，否则高速穿墙 */
+    var disp = Math.max(Math.abs(ball.vx), Math.abs(ball.vy)) * dtS;
+    var n = Math.min(8, Math.max(1, Math.ceil(disp / (CFG.r * 0.5))));
+    lastSub = n;
+    var h = dtS / n;
+    for (var s = 0; s < n; s++) {
+      ball.x += ball.vx * h; resolveX();
+      ball.y += ball.vy * h; resolveY();
+    }
+
+    var gcx = GOAL.c * CELL + CELL / 2, gcy = GOAL.r * CELL + CELL / 2;
+    if (!won && Math.abs(ball.x - gcx) < CELL * 0.34 && Math.abs(ball.y - gcy) < CELL * 0.34) {
+      won = true; winAt = performance.now();
+      ball.vx *= 0.2; ball.vy *= 0.2;
+    }
+    for (var i = sparks.length - 1; i >= 0; i--) {
+      sparks[i].t += dtS;
+      if (sparks[i].t > 0.32) { sparks[i] = sparks[sparks.length - 1]; sparks.pop(); }
+    }
+  }
+
+  /* ================= 渲染 ================= */
+  var cv = document.getElementById('cv'), ctx = cv.getContext('2d');
+  var W = 0, H = 0, DPR = 1, SC = 1, OX = 0, OY = 0;
+  function resize() {
+    var b = stage.getBoundingClientRect();
+    W = Math.max(1, b.width); H = Math.max(1, b.height);
+    DPR = Math.min(window.devicePixelRatio || 1, 2);
+    cv.width = Math.round(W * DPR); cv.height = Math.round(H * DPR);
+    cv.style.width = W + 'px'; cv.style.height = H + 'px';
+    SC = Math.min(W / LW, H / LH) * 0.94;       // 逻辑 -> CSS 的等比缩放
+    OX = (W - LW * SC) / 2; OY = (H - LH * SC) / 2;
+  }
+  resize();
+  window.addEventListener('resize', function () { resize(); draw(); });
+
+  function draw() {
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    ctx.clearRect(0, 0, W, H);
+    ctx.setTransform(DPR * SC, 0, 0, DPR * SC, DPR * OX, DPR * OY);  // 之后全用逻辑坐标
+    var r = CFG.r;
+
+    /* 地面 */
+    ctx.fillStyle = 'rgba(255,255,255,.025)';
+    ctx.fillRect(0, 0, LW, LH);
+
+    /* 终点：绿色格子 */
+    var gx = GOAL.c * CELL, gy = GOAL.r * CELL, s = CELL / 4;
+    ctx.fillStyle = 'rgba(53,209,142,.16)';
+    ctx.fillRect(gx, gy, CELL, CELL);
+    ctx.fillStyle = 'rgba(53,209,142,.5)';
+    for (var i = 0; i < 4; i++) for (var j = 0; j < 4; j++) {
+      if ((i + j) % 2) ctx.fillRect(gx + i * s, gy + j * s, s, s);
+    }
+    ctx.strokeStyle = '#35d18e'; ctx.lineWidth = 1.5;
+    ctx.strokeRect(gx + .75, gy + .75, CELL - 1.5, CELL - 1.5);
+
+    /* 墙 */
+    for (var k = 0; k < walls.length; k++) {
+      var w = walls[k];
+      ctx.fillStyle = '#222b3f';
+      ctx.fillRect(w.x, w.y, w.w, w.h);
+      ctx.fillStyle = 'rgba(255,255,255,.07)';
+      ctx.fillRect(w.x, w.y, w.w, 2);
+      ctx.strokeStyle = 'rgba(0,0,0,.5)'; ctx.lineWidth = 1;
+      ctx.strokeRect(w.x + .5, w.y + .5, w.w - 1, w.h - 1);
+    }
+
+    /* 撞击火花 */
+    for (var m = 0; m < sparks.length; m++) {
+      var p = sparks[m], a = 1 - p.t / 0.32;
+      ctx.fillStyle = 'rgba(233,237,246,' + (a * 0.55).toFixed(3) + ')';
+      ctx.beginPath(); ctx.arc(p.x, p.y, 3 + (1 - a) * 7, 0, 6.2832); ctx.fill();
+    }
+
+    /* 球：径向渐变 + 高光，纯画布，无图片 */
+    var grd = ctx.createRadialGradient(ball.x - r * .4, ball.y - r * .45, r * .2, ball.x, ball.y, r);
+    grd.addColorStop(0, '#eafff4'); grd.addColorStop(.45, '#7fe6b4'); grd.addColorStop(1, '#178a5b');
+    ctx.fillStyle = grd;
+    ctx.beginPath(); ctx.arc(ball.x, ball.y, r, 0, 6.2832); ctx.fill();
+    ctx.strokeStyle = 'rgba(0,0,0,.45)'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.arc(ball.x, ball.y, r - .5, 0, 6.2832); ctx.stroke();
+
+    /* 重力矢量调试 */
+    if (CFG.showVec) {
+      var tv = readTilt();
+      var ax = LW / 2 + tv.x * (LW / 2 - 12), ay = LH / 2 + tv.y * (LH / 2 - 12);
+      ctx.strokeStyle = 'rgba(247,185,85,.85)'; ctx.fillStyle = 'rgba(247,185,85,.85)'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(LW / 2, LH / 2); ctx.lineTo(ax, ay); ctx.stroke();
+      var ang = Math.atan2(ay - LH / 2, ax - LW / 2);
+      ctx.beginPath();
+      ctx.moveTo(ax, ay);
+      ctx.lineTo(ax - Math.cos(ang - .4) * 9, ay - Math.sin(ang - .4) * 9);
+      ctx.lineTo(ax - Math.cos(ang + .4) * 9, ay - Math.sin(ang + .4) * 9);
+      ctx.closePath(); ctx.fill();
+      ctx.strokeStyle = 'rgba(247,185,85,.28)';
+      ctx.beginPath(); ctx.arc(LW / 2, LH / 2, LW / 2 - 12, 0, 6.2832); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(ball.x, ball.y);
+      ctx.lineTo(ball.x + ball.vx * 0.06, ball.y + ball.vy * 0.06);
+      ctx.strokeStyle = 'rgba(36,211,238,.85)'; ctx.stroke();
+    }
+  }
+
+  /* ================= 循环 ================= */
+  var hud = document.getElementById('hud'), veil = document.getElementById('veil');
+  var raf = null, last = 0, idleFrames = 0;
+  function showHud() {
+    hud.innerHTML = '第 <b>' + level + '</b> 关 · v <b>' +
+      Math.round(Math.hypot(ball.vx, ball.vy)) + '</b> · 子步 <b>' + lastSub + '</b>' +
+      (won ? ' <span class="win">→ 进入第 ' + (level + 1) + ' 关</span>' : '');
+  }
+  function frame(t) {
+    var ms = last ? t - last : 16.7;
+    ms = Math.min(ms, 34); last = t;
+    step(ms / 1000);
+    draw(); showHud();
+    if (won && t - winAt > 900) { raf = null; loadMaze(randomGrid(), true); wake(); return; }
+    var moving = Math.hypot(ball.vx, ball.vy) >= 2 || hasPoint || keyTilt() || sparks.length;
+    idleFrames = moving ? 0 : idleFrames + 1;
+    /* 松手后球停在原地：连续 3 帧无事可做就停排 rAF，等下一次输入唤醒 */
+    if (!CFG.pause && idleFrames < 3) raf = requestAnimationFrame(frame);
+    else { raf = null; last = 0; if (CFG.pause) veil.classList.add('on'); }
+  }
+  function wake() {
+    if (CFG.pause) { veil.classList.add('on'); return; }
+    veil.classList.remove('on');
+    idleFrames = 0;
+    if (!raf) { last = 0; raf = requestAnimationFrame(frame); }
+  }
+
+  /* ================= 面板 ================= */
+  function bindRange(id, outId, key, fmt) {
+    var inp = document.getElementById(id), out = document.getElementById(outId);
+    out.textContent = fmt(CFG[key]);
+    inp.addEventListener('input', function () {
+      CFG[key] = parseFloat(inp.value);
+      out.textContent = fmt(CFG[key]);
+      draw();
+    });
+  }
+  bindRange('sTilt', 'oTilt', 'G', function (v) { return String(v | 0); });
+  bindRange('sRest', 'oRest', 'rest', function (v) { return v.toFixed(2); });
+  bindRange('sFric', 'oFric', 'mu', function (v) { return v.toFixed(1); });
+
+  document.getElementById('cVec').addEventListener('change', function () {
+    CFG.showVec = this.checked; draw();
+  });
+  var pauseBox = document.getElementById('cPause');
+  pauseBox.addEventListener('change', function () {
+    CFG.pause = this.checked;
+    if (this.checked) { if (raf) { cancelAnimationFrame(raf); raf = null; } veil.classList.add('on'); }
+    else wake();
+  });
+  document.getElementById('bReset').addEventListener('click', function () { resetBall(); wake(); });
+  document.getElementById('bRand').addEventListener('click', function () { loadMaze(randomGrid(), false); wake(); });
+
+  if (window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    pauseBox.checked = true;
+    pauseBox.dispatchEvent(new Event('change'));
+  }
+
+  loadMaze(gridFromStrings(LEVEL1), false);
+  draw();
+})();
+</script>
+</body>
+</html>

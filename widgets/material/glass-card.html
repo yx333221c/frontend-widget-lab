@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>玻璃拟态卡片 · Widget Lab</title>
+<style>
+  /* ============================================================
+     玻璃 = 四层叠加，少一层就换一种廉价法
+       1) backdrop-filter 折射它下面真实存在的内容
+       2) 低 alpha 的白色叠加（tint）：决定"磨砂"还是"灰板"
+       3) 噪点：打碎大面积光滑模糊
+       4) 斜向高光 + 上亮下暗的边缘：模拟反射
+     动效只用 transform，模糊与噪点都不参与动画。
+     ============================================================ */
+  :root {
+    --bg: #0e1119;
+    --ink: #e9edf6;
+    --muted: #8695b4;
+    --accent: #7c5cff;
+    --blur: 12px;   /* backdrop 模糊半径，滑块写入 */
+    --tint: 0.10;   /* 卡片白色叠加度，滑块写入 */
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 22px 20px;
+    background:
+      radial-gradient(120% 90% at 10% -10%, #1a2039 0%, transparent 60%),
+      radial-gradient(90% 80% at 100% 112%, #14283c 0%, transparent 55%),
+      var(--bg);
+    color: var(--ink);
+    font: 14px/1.6 system-ui, "PingFang SC", "Microsoft YaHei", sans-serif;
+  }
+  h2 { margin: 0 0 4px; font-size: 15px; letter-spacing: -.2px; }
+  p.note { margin: 0 0 12px; color: var(--muted); font-size: 12.5px; }
+
+  /* ============ 舞台：玻璃必须有可折射的下层内容 ============ */
+  .scene {
+    position: relative; overflow: hidden;
+    padding: 14px 14px 16px;
+    border-radius: 16px;
+    border: 1px solid rgba(255, 255, 255, .1);
+    isolation: isolate;      /* 噪点只在舞台内混合，不外溢 */
+  }
+  .bg { position: absolute; inset: 0; z-index: -1; }
+  /* 三颗缓慢位移的渐变球：模糊效果要有东西可糊 */
+  .blob { position: absolute; border-radius: 50%; will-change: transform; }
+  .b1 {
+    width: 300px; height: 300px; left: -66px; top: -124px;
+    background: radial-gradient(circle at 34% 34%, #9b7bff 0%, #5b34d6 45%, rgba(60, 30, 150, 0) 72%);
+    animation: drift1 19s ease-in-out infinite alternate;
+  }
+  .b2 {
+    width: 260px; height: 260px; right: -40px; top: 26px;
+    background: radial-gradient(circle at 60% 40%, #2adcf4 0%, #0f8fb6 42%, rgba(10, 90, 130, 0) 74%);
+    animation: drift2 24s ease-in-out infinite alternate;
+  }
+  .b3 {
+    width: 150px; height: 150px; left: 40%; bottom: -72px;
+    background: radial-gradient(circle at 50% 50%, #ff6fa8 0%, #c93b78 45%, rgba(160, 40, 90, 0) 75%);
+    animation: drift1 15s ease-in-out infinite alternate-reverse;
+  }
+  @keyframes drift1 { to { transform: translate3d(70px, 44px, 0) scale(1.12); } }
+  @keyframes drift2 { to { transform: translate3d(-64px, -32px, 0) scale(1.08); } }
+
+  /* 细网格：它是模糊半径最直观的"读数"，网格变糊 = blur 在生效 */
+  .grid {
+    position: absolute; inset: 0; opacity: .55;
+    background-image:
+      repeating-linear-gradient(90deg, rgba(226, 236, 255, .26) 0 1px, transparent 1px 23px),
+      repeating-linear-gradient(0deg, rgba(226, 236, 255, .16) 0 1px, transparent 1px 23px);
+  }
+  /* 噪点：内联 SVG 的 feTurbulence，栅格化一次后只参与混合 */
+  .noise {
+    position: absolute; inset: 0; width: 100%; height: 100%;
+    opacity: .38; mix-blend-mode: overlay; pointer-events: none;
+    transition: opacity .2s;
+  }
+  body.no-noise .noise { opacity: 0; }
+
+  /* ============ 卡片本体 ============ */
+  .glass {
+    position: relative; overflow: hidden;
+    max-width: 400px;
+    padding: 11px 13px 12px;
+    border-radius: 18px;
+    border: 1px solid rgba(255, 255, 255, .18);
+    /* 卡片自身必须半透明，否则 backdrop-filter 白做 */
+    background: rgba(255, 255, 255, var(--tint));
+    -webkit-backdrop-filter: blur(var(--blur)) saturate(1.55);
+    backdrop-filter: blur(var(--blur)) saturate(1.55);
+    box-shadow: 0 20px 42px -18px rgba(3, 6, 16, .95);
+    text-shadow: 0 1px 2px rgba(6, 10, 22, .6);
+  }
+  /* 斜向高光：左上最亮，中段归零，右下留一点回光 */
+  .glass::before {
+    content: ""; position: absolute; inset: 0; border-radius: inherit;
+    pointer-events: none;
+    background: linear-gradient(135deg,
+      rgba(255, 255, 255, .40) 0%,
+      rgba(255, 255, 255, .10) 22%,
+      rgba(255, 255, 255, 0) 46%,
+      rgba(255, 255, 255, 0) 76%,
+      rgba(255, 255, 255, .12) 100%);
+    transition: opacity .2s;
+  }
+  /* 描边之外再补两道 inset：上亮下暗，单靠 1px 边框模拟不出反射 */
+  .glass::after {
+    content: ""; position: absolute; inset: 0; border-radius: inherit;
+    pointer-events: none;
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, .58),
+      inset 0 -1px 0 rgba(9, 12, 24, .38);
+    transition: opacity .2s;
+  }
+  body.no-edge .glass { border-color: rgba(255, 255, 255, .14); }
+  body.no-edge .glass::before,
+  body.no-edge .glass::after { opacity: 0; }
+  /* 内容压在两层光泽之上，文字对比度才不被高光吃掉 */
+  .glass > * { position: relative; z-index: 1; }
+
+  .head { display: flex; align-items: center; gap: 9px; }
+  .avatar {
+    flex: none; width: 32px; height: 32px; border-radius: 50%;
+    display: grid; place-items: center; font-size: 13px; font-weight: 700; color: #1a1030;
+    background: conic-gradient(from 210deg, #cdbcff, #7c5cff, #4be0f5, #cdbcff);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .7), 0 2px 6px rgba(4, 6, 16, .4);
+  }
+  .who { display: flex; flex-direction: column; line-height: 1.2; }
+  .who strong { font-size: 13px; letter-spacing: -.1px; }
+  .who em { font-style: normal; font-size: 11px; color: #cdd6ec; }
+  .follow {
+    margin-left: auto; cursor: pointer; font: inherit;
+    padding: 4px 11px; border-radius: 999px; font-size: 12px; font-weight: 650;
+    color: #f2eeff; background: rgba(124, 92, 255, .38);
+    border: 1px solid rgba(255, 255, 255, .28);
+    transition: background .2s, transform .2s;
+  }
+  .follow:hover { background: rgba(124, 92, 255, .6); }
+  .follow:active { transform: scale(.96); }
+  .glass p.body { margin: 7px 0 8px; font-size: 12.5px; line-height: 1.5; color: #eef2fb; }
+  .tags { display: flex; flex-wrap: wrap; gap: 5px; }
+  .tags span {
+    padding: 1px 8px; border-radius: 999px; font-size: 10.5px;
+    color: #dfe6f7; background: rgba(255, 255, 255, .12);
+    border: 1px solid rgba(255, 255, 255, .2);
+  }
+
+  /* 对照组：@supports 降级后的卡片（不透明纯色，零模糊开销） */
+  .solid {
+    position: absolute; right: 14px; bottom: 16px;
+    padding: 6px 11px; border-radius: 12px;
+    font-size: 11px; line-height: 1.35; color: #cdd6ec;
+    background: rgba(26, 32, 54, .94);
+    border: 1px solid rgba(255, 255, 255, .1);
+  }
+  .solid b { display: block; font-size: 10.5px; color: var(--muted); font-weight: 500; }
+
+  /* ============ 控制面板 ============ */
+  .panel {
+    display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center;
+    margin-top: 10px; padding: 8px 12px; border-radius: 12px;
+    background: rgba(255, 255, 255, .04); border: 1px solid rgba(255, 255, 255, .1);
+    font-size: 12px; color: #a9b6d1;
+  }
+  .panel label { display: flex; align-items: center; gap: 7px; white-space: nowrap; }
+  .panel input[type="range"] { width: 84px; accent-color: var(--accent); }
+  .panel output { font-variant-numeric: tabular-nums; color: var(--ink); min-width: 36px; }
+  .panel .chk { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+  .panel input[type="checkbox"] { accent-color: var(--accent); }
+  code { font: 11px ui-monospace, Consolas, monospace; color: #b8c6e6; }
+
+  /* ============ 降级：没有 backdrop-filter 就别留半透明白 ============ */
+  @supports not ((backdrop-filter: blur(2px)) or (-webkit-backdrop-filter: blur(2px))) {
+    .glass { background: rgba(24, 30, 52, .88); }
+    .glass::before { opacity: .35; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .blob { animation: none; }
+  }
+</style>
+</head>
+<body>
+  <h2>玻璃拟态卡片 Glass Card</h2>
+  <p class="note">背景三颗色球一直在动。逐个关掉"噪点层 / 高光边"，再把白色叠加推到 <code>0.30</code>。</p>
+
+  <div class="scene">
+    <div class="bg" aria-hidden="true">
+      <span class="blob b1"></span>
+      <span class="blob b2"></span>
+      <span class="blob b3"></span>
+      <span class="grid"></span>
+      <svg class="noise" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="none" aria-hidden="true" focusable="false">
+        <filter id="grain" x="0" y="0" width="100%" height="100%">
+          <feTurbulence type="fractalNoise" baseFrequency="0.82" numOctaves="2" stitchTiles="stitch" result="t"/>
+          <feColorMatrix in="t" type="saturate" values="0"/>
+          <feComponentTransfer><feFuncA type="linear" slope="0.6" intercept="0.1"/></feComponentTransfer>
+        </filter>
+        <rect width="100%" height="100%" filter="url(#grain)"/>
+      </svg>
+    </div>
+
+    <article class="glass">
+      <div class="head">
+        <span class="avatar">陆</span>
+        <span class="who"><strong>陆知远</strong><em>前端 · 材质与光影</em></span>
+        <button class="follow" type="button" id="followBtn">关注</button>
+      </div>
+      <p class="body">玻璃感来自折射而不是透明：卡片下方的网格被 backdrop-filter 糊掉，噪点打碎光滑的模糊，斜向高光负责反射。</p>
+      <div class="tags"><span>backdrop-filter</span><span>feTurbulence</span><span>上亮下暗</span><span>@supports</span></div>
+    </article>
+
+    <div class="solid"><b>@supports 降级</b>不支持时落到不透明纯色</div>
+  </div>
+
+  <div class="panel">
+    <label>模糊半径
+      <input type="range" id="sBlur" min="0" max="26" step="1" value="12" aria-label="模糊半径">
+      <output id="oBlur">12px</output>
+    </label>
+    <label>白色叠加
+      <input type="range" id="sTint" min="0" max="0.4" step="0.01" value="0.10" aria-label="白色叠加度">
+      <output id="oTint">0.10</output>
+    </label>
+    <label class="chk"><input type="checkbox" id="cNoise" checked> 噪点层</label>
+    <label class="chk"><input type="checkbox" id="cEdge" checked> 高光边</label>
+  </div>
+
+<script>
+(function () {
+  'use strict';
+
+  var root = document.documentElement;
+  var sBlur = document.getElementById('sBlur'), oBlur = document.getElementById('oBlur');
+  var sTint = document.getElementById('sTint'), oTint = document.getElementById('oTint');
+  var queued = false;
+
+  /* 滑块一帧内能触发多次 input：合并到下一帧写一次自定义属性，
+      backdrop-filter 每变一次都要重栅格化模糊区，省一次是一次 */
+  function apply() {
+    if (queued) return;
+    queued = true;
+    requestAnimationFrame(function () {
+      queued = false;
+      root.style.setProperty('--blur', parseFloat(sBlur.value) + 'px');
+      root.style.setProperty('--tint', parseFloat(sTint.value).toFixed(2));
+    });
+  }
+  sBlur.addEventListener('input', function () {
+    oBlur.textContent = parseFloat(sBlur.value) + 'px'; apply();
+  });
+  sTint.addEventListener('input', function () {
+    oTint.textContent = parseFloat(sTint.value).toFixed(2); apply();
+  });
+
+  /* 两个"关掉这一层"的对比开关 */
+  document.getElementById('cNoise').addEventListener('change', function () {
+    document.body.classList.toggle('no-noise', !this.checked);
+  });
+  document.getElementById('cEdge').addEventListener('change', function () {
+    document.body.classList.toggle('no-edge', !this.checked);
+  });
+
+  document.getElementById('followBtn').addEventListener('click', function () {
+    var on = this.textContent === '关注';
+    this.textContent = on ? '已关注' : '关注';
+  });
+})();
+</script>
+</body>
+</html>

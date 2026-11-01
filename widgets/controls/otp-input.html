@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>验证码分格输入 · Widget Lab</title>
+<style>
+  /* ============ 画布 ============ */
+  :root {
+    --bg: #0e1119;
+    --ink: #e9edf6;
+    --accent: #7c5cff;
+    --cell-w: 34px;
+    --cell-h: 44px;
+    --cell-gap: 8px;
+  }
+  * { box-sizing: border-box; }
+  /* iframe 里不能出现内部滚动条：超出直接裁掉，所以整块高度必须留在 viewport 内 */
+  html { overflow: hidden; }
+  body {
+    margin: 0; padding: 22px 20px;
+    background:
+      radial-gradient(120% 90% at 12% -10%, #1d2340 0%, transparent 60%),
+      radial-gradient(100% 80% at 100% 110%, #17303a 0%, transparent 55%),
+      var(--bg);
+    color: var(--ink);
+    font: 14px/1.6 system-ui, "PingFang SC", "Microsoft YaHei", sans-serif;
+  }
+  h2 { margin: 0 0 2px; font-size: 15px; letter-spacing: -.2px; }
+  p.note { margin: 0 0 12px; color: #8695b4; font-size: 12.5px; }
+
+  /* 只给读屏器与语音播报用的实时区域，不占版面高度 */
+  .sr {
+    position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
+    overflow: hidden; clip-path: inset(50%); white-space: nowrap;
+  }
+
+  /* ============ 展示格（纯装饰，aria-hidden） ============ */
+  .otp { position: relative; display: inline-block; }
+  .cells { display: flex; gap: var(--cell-gap); }
+  .cell {
+    position: relative;
+    width: var(--cell-w); height: var(--cell-h);
+    display: grid; place-items: center;
+    border-radius: 10px;
+    background: rgba(255, 255, 255, .04);
+    border: 1px solid rgba(255, 255, 255, .1);
+    font: 700 20px/1 ui-monospace, "Cascadia Mono", Consolas, monospace;
+    color: var(--ink);
+    transition: border-color .18s, background .18s;
+  }
+  .cell.on { border-color: rgba(124, 92, 255, .55); background: rgba(124, 92, 255, .08); }
+  /* 当前格 = 光标所在格。用类名画光标，而不是依赖原生光标 */
+  .cell.active { border-color: var(--accent); background: rgba(124, 92, 255, .14); }
+  .cell.active::after {
+    content: ""; position: absolute; left: 50%; top: 50%;
+    width: 2px; height: 22px; margin: -11px 0 0 -1px;
+    border-radius: 1px; background: var(--accent);
+    animation: blink 1.05s steps(1, end) infinite;
+  }
+  @keyframes blink { 50% { opacity: 0; } }
+
+  /* 掩码：文本留在 DOM 里，只把它压成 • （type=password 会废掉 autofill） */
+  .otp.masked .cell.on { color: transparent; font-size: 0; }
+  .otp.masked .cell.on::before { content: "•"; font: 700 22px/1 system-ui; color: var(--ink); }
+
+  /* ============ 覆盖层：整条唯一的真 input ============ */
+  .layer {
+    position: absolute; left: 0; top: 0; z-index: 2;
+    width: 100%; height: 100%;
+    margin: 0; padding: 0 14px; border: 0; border-radius: 10px;
+    background: transparent; color: var(--ink);
+    font: 700 20px/1 ui-monospace, "Cascadia Mono", Consolas, monospace;
+    letter-spacing: 24px;          /* 撑开原生光标间距，选区也不会糊成一团 */
+    opacity: 0;                    /* 不能 display:none / visibility:hidden：元素不渲染就没有粘贴、IME、autofill */
+    caret-color: transparent;
+    outline: none;
+  }
+
+  /* ============ 校验态 ============ */
+  .otp.ok .cell { border-color: rgba(53, 209, 142, .8); background: rgba(53, 209, 142, .12); }
+  .otp.bad .cell { border-color: rgba(255, 95, 158, .8); background: rgba(255, 95, 158, .12); }
+  .otp.bad .cells { animation: shake .34s ease-in-out both; }
+  @keyframes shake {
+    10% { transform: translate3d(-6px, 0, 0); }
+    30% { transform: translate3d(5px, 0, 0); }
+    50% { transform: translate3d(-4px, 0, 0); }
+    70% { transform: translate3d(3px, 0, 0); }
+    90% { transform: translate3d(-1px, 0, 0); }
+  }
+
+  /* ============ 状态行 + 控制面板 ============ */
+  .status { margin: 5px 0 0; min-height: 20px; font-size: 12.5px; color: #8695b4; }
+  .otp.ok ~ .status { color: #6ee7b7; }
+  .otp.bad ~ .status { color: #ff9ec2; }
+  .panel {
+    display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: center;
+    margin-top: 9px; padding: 8px 12px; border-radius: 12px;
+    background: rgba(255, 255, 255, .04); border: 1px solid rgba(255, 255, 255, .1);
+    font-size: 12.5px; color: #a9b6d1;
+  }
+  .panel > span, .panel > label, .panel > button {
+    display: inline-flex; align-items: center; gap: 7px; white-space: nowrap;
+  }
+  .panel .chk { cursor: pointer; }
+  .panel input[type="checkbox"] { accent-color: var(--accent); }
+
+  /* 分段单选：真 radio 藏在 label 后面，保留原生方向键成组切换 */
+  .seg { display: inline-flex; gap: 2px; padding: 2px; border-radius: 9px; background: rgba(255, 255, 255, .05); }
+  .seg input { position: absolute; width: 1px; height: 1px; opacity: 0; margin: 0; }
+  .seg label {
+    padding: 3px 10px; border-radius: 7px; cursor: pointer;
+    font: 600 12px/1.5 system-ui; color: #93a1bd;
+    transition: background .2s, color .2s;
+  }
+  .seg label:hover { color: var(--ink); }
+  .seg input:checked + label { background: var(--accent); color: #fff; }
+  .seg input:focus-visible + label { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  .btn {
+    padding: 5px 12px; border-radius: 9px; cursor: pointer;
+    border: 1px solid rgba(255, 255, 255, .16);
+    background: rgba(255, 255, 255, .06); color: var(--ink);
+    font: 600 12.5px/1.5 system-ui;
+    transition: background .2s, border-color .2s, color .2s;
+  }
+  .btn:hover { background: rgba(255, 255, 255, .12); border-color: rgba(255, 95, 158, .6); }
+  .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .cell, .seg label, .btn { transition: none; }
+    .cell.active::after, .otp.bad .cells { animation: none; }
+  }
+</style>
+</head>
+<body>
+  <h2>验证码分格输入 OTP Input</h2>
+  <p class="note">整条只有一个真 input，格子是画出来的。敲数字、粘贴、退格、autofill 都还是原生行为。</p>
+
+  <div class="otp" id="otp">
+    <!-- 视觉层：6 个格子，全部 aria-hidden，读屏器只会念下面那一个 input -->
+    <div class="cells" id="cells" aria-hidden="true"></div>
+    <!-- 交互层：唯一的事实来源 -->
+    <input class="layer" id="code" type="text" inputmode="numeric" autocomplete="one-time-code"
+           pattern="[0-9]{6}" maxlength="6" aria-label="6 位验证码" aria-describedby="status"
+           spellcheck="false" autocapitalize="off">
+  </div>
+  <p class="status" id="status">等待输入。</p>
+  <p class="sr" id="live" role="status" aria-live="polite"></p>
+
+  <div class="panel">
+    <span>格数</span>
+    <span class="seg">
+      <input type="radio" name="len" id="L4" value="4" aria-label="4 位验证码"><label for="L4">4</label>
+      <input type="radio" name="len" id="L6" value="6" checked aria-label="6 位验证码"><label for="L6">6</label>
+      <input type="radio" name="len" id="L8" value="8" aria-label="8 位验证码"><label for="L8">8</label>
+    </span>
+    <label class="chk"><input type="checkbox" id="cMask"> 掩码显示</label>
+    <button class="btn" id="badBtn" type="button">演示错误态</button>
+  </div>
+
+<script>
+(function () {
+  'use strict';
+
+  var otp = document.getElementById('otp');
+  var cellsEl = document.getElementById('cells');
+  var input = document.getElementById('code');
+  var status = document.getElementById('status');
+  var live = document.getElementById('live');
+
+  var N = 6;                    // 位数
+  var t1 = null, t2 = null;     // 校验 / 清空 两个定时器
+  var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  function code() { return '12345678'.slice(0, N); }   // 演示用的"服务端记录的正确码"
+  function say(m) { status.textContent = m; live.textContent = m; }
+
+  /* ---------------- 建格 ---------------- */
+  function build() {
+    input.maxLength = N;
+    input.pattern = '[0-9]{' + N + '}';
+    input.setAttribute('aria-label', N + ' 位验证码');
+    if (input.value.length > N) setValue(input.value.slice(0, N));
+    var html = '';
+    for (var i = 0; i < N; i++) html += '<span class="cell empty"></span>';
+    cellsEl.innerHTML = html;
+    paint();
+  }
+
+  /* ---------------- 光标位置：越界一律夹回 ---------------- */
+  function caret() {
+    var v = input.value.length, s = input.selectionStart, e = input.selectionEnd;
+    if (s == null) return v;                       // 极少数浏览器在类型不兼容时返回 null
+    return Math.min(Math.max(s, 0), v);
+  }
+  function setSel(a, b) {
+    if (b == null) b = a;
+    try { input.setSelectionRange(a, b); } catch (e) { /* number 类型会抛，这里不会 */ }
+  }
+
+  /* ---------------- 把 value 映射到格子 ---------------- */
+  function paint() {
+    var v = input.value, n = cellsEl.children.length, c = caret();
+    var focused = document.activeElement === input;
+    for (var i = 0; i < n; i++) {
+      var filled = i < v.length;
+      /* 满格时 caret() 被夹到 v.length === n，i === c 永不成立，于是没有格子亮光标 */
+      var cls = 'cell ' + (filled ? 'on' : 'empty');
+      if (focused && i === c) cls += ' active';
+      cellsEl.children[i].className = cls;
+      cellsEl.children[i].textContent = filled ? v.charAt(i) : '';
+    }
+  }
+
+  /* 合并到一帧里画：selectionchange 在一次拖选里能连续触发多次，
+     直接 paint 就是每次改一遍 DOM。排完帧就停，不留常驻循环。 */
+  var raf = null;
+  function schedule() {
+    if (raf) return;
+    raf = requestAnimationFrame(function () { raf = null; paint(); });
+  }
+
+  /* 点第 k 格：原生先把光标按 x 落在文字上，我们再精确吸到第 k 位。
+     这样 Backspace 删的就是"光标左边那一格"，而不是最后一格。 */
+  function placeCaretAtCell(index) {
+    var pos = Math.min(index, input.value.length);
+    setSel(pos, pos);
+    paint();
+  }
+
+  function setValue(v) {
+    input.value = v;                 // 程序化赋值会把光标推到末尾，调用方随后 setSel
+    if (v.length === N) say('已填满 ' + N + ' 位，校验中…');
+    else say('已输入 ' + v.length + ' / ' + N + ' 位。');
+  }
+  function clearAll() {
+    otp.classList.remove('ok', 'bad');
+    setValue('');
+    setSel(0, 0);
+    say('已清空，重新输入。');
+    paint();
+  }
+  /* 只删掉一格，其余左移；不是 slice(0, i) 那种"把它后面的全抹掉" */
+  function spliceOut(v, i) { return v.slice(0, i) + v.slice(i + 1); }
+  function stop() { clearTimeout(t1); clearTimeout(t2); t1 = t2 = null; }
+
+  /* ---------------- 模拟一次网络校验 ---------------- */
+  function verify() {
+    stop();
+    otp.classList.remove('ok', 'bad');
+    say('校验中…');
+    t1 = setTimeout(function () {
+      if (input.value === code()) {
+        otp.classList.add('ok');
+        say('✓ 校验通过（正确码 ' + code() + '）');
+      } else {
+        otp.classList.add('bad');
+        say('✕ 验证码不正确，抖动结束后自动清空');
+        t2 = setTimeout(clearAll, reduce ? 0 : 620);
+      }
+    }, 300);
+  }
+
+  /* ---------------- 事件 ---------------- */
+  input.addEventListener('input', function () {
+    var raw = input.value;
+    var digits = raw.replace(/\D/g, '');
+    if (digits.length > N) digits = digits.slice(0, N);
+    if (digits !== raw) setValue(digits);   // 只有真过滤掉字符才回写，否则光标会被抢走
+    else say(digits.length ? '已输入 ' + digits.length + ' / ' + N + ' 位。' : '等待输入。');
+    if (raw.length > digits.length) say('只允许数字（已过滤 ' + (raw.length - digits.length) + ' 个字符）。');
+    stop();
+    otp.classList.remove('ok', 'bad');
+    paint();
+    if (input.value.length === N) verify();
+  });
+
+  input.addEventListener('keydown', function (e) {
+    var v = input.value, s = caret(), e2 = input.selectionEnd;
+    if (e.key === 'Backspace' && s === e2 && s > 0) {
+      e.preventDefault();                 // 抢在原生"删字符串最后一个字符"之前
+      setValue(spliceOut(v, s - 1)); setSel(s - 1); paint();
+    } else if (e.key === 'Delete' && s === e2 && s < v.length) {
+      e.preventDefault();
+      setValue(spliceOut(v, s)); setSel(s); paint();
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      if (v.length === N) verify(); else say('还差 ' + (N - v.length) + ' 位。');
+    } else if (e.key === 'Escape') {
+      e.preventDefault(); clearAll();
+    }
+    /* 方向键 / Home / End 完全不拦：原生按字符移动光标，落点正好是格序 */
+  });
+
+  input.addEventListener('paste', function (e) {
+    e.preventDefault();                   // 自己分发：只取数字、截断到位数、整串覆盖
+    var text = (e.clipboardData && e.clipboardData.getData('text')) || '';
+    var digits = text.replace(/\D/g, '').slice(0, N);
+    if (!digits) { say('剪贴板里没有数字。'); return; }
+    setValue(digits); setSel(digits.length); paint();
+    if (digits.length === N) verify();
+  });
+
+  /* 覆盖层在最上面，所以 e.target 永远是 input：用 x 坐标反查点的是第几格 */
+  otp.addEventListener('click', function (e) {
+    if (e.target !== input) return;
+    var kids = cellsEl.children, hit = kids.length - 1;
+    for (var i = 0; i < kids.length; i++) {
+      if (e.clientX < kids[i].getBoundingClientRect().right) { hit = i; break; }
+    }
+    placeCaretAtCell(hit);
+  });
+
+  input.addEventListener('focus', schedule);
+  input.addEventListener('blur', function () {
+    schedule();
+    if (!input.value) say('等待输入。');
+  });
+  document.addEventListener('selectionchange', function () {
+    if (document.activeElement === input) schedule();
+  });
+
+  /* ---------------- 控制面板 ---------------- */
+  function bindLen(id) {
+    document.getElementById(id).addEventListener('change', function () {
+      N = parseInt(this.value, 10);
+      stop();
+      otp.classList.remove('ok', 'bad');
+      build();
+      say('位数已切换为 ' + N + ' 位，正确码 ' + code() + '。');
+      if (input.value.length === N) verify();
+    });
+  }
+  ['L4', 'L6', 'L8'].forEach(bindLen);
+
+  document.getElementById('cMask').addEventListener('change', function () {
+    otp.classList.toggle('masked', this.checked);
+    say(this.checked
+      ? '掩码只显示 •，value 仍是明文 —— 不改 type=password，autofill 才不会失效。'
+      : '已恢复明文显示。');
+  });
+
+  document.getElementById('badBtn').addEventListener('click', function () {
+    var wrong = '';
+    for (var i = 0; i < N; i++) wrong += '9';
+    setValue(wrong); setSel(wrong.length); paint();
+    verify();
+    input.focus();
+  });
+
+  build();
+})();
+</script>
+</body>
+</html>

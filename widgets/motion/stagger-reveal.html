@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>滚动错峰入场 · Widget Lab</title>
+<style>
+  :root {
+    --bg: #0e1119;
+    --ink: #e9edf6;
+    --accent: #24d3ee;
+    --dur: 520ms;   /* 单张卡片的动画时长 */
+    --step: 60ms;   /* 延迟增量：错峰的心跳 */
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 22px 20px;
+    background:
+      radial-gradient(120% 90% at 10% -10%, #123043 0%, transparent 60%),
+      radial-gradient(110% 80% at 100% 110%, #10222b 0%, transparent 55%),
+      var(--bg);
+    color: var(--ink);
+    font: 14px/1.6 system-ui, "PingFang SC", "Microsoft YaHei", sans-serif;
+  }
+  h2 { margin: 0 0 2px; font-size: 15px; letter-spacing: -.2px; }
+  p.note { margin: 0 0 6px; color: #8695b4; font-size: 12.5px; }
+  p.hint { margin: 8px 0 0; color: #6c7893; font-size: 11px; line-height: 1.5; }
+
+  /* ============ 滚动容器 ============
+     组件本身是"滚动 demo"，滚动被关在一个固定高度的容器里，
+     IntersectionObserver 的 root 就是这个容器（不是浏览器视口）。
+     320px 的 iframe 装不下 300px 容器 + 标题 + 面板，所以用 45vh 兜底：
+     单独打开时是 300px，塞进 iframe 时自动缩到刚好不溢出。 */
+  .stream {
+    height: min(300px, 45vh);
+    overflow-y: auto; overflow-x: hidden;
+    padding: 8px 10px 14px;
+    border-radius: 12px;
+    background: rgba(255, 255, 255, .03);
+    border: 1px solid rgba(255, 255, 255, .1);
+    scrollbar-width: thin;
+  }
+  .stream::-webkit-scrollbar { width: 8px; }
+  .stream::-webkit-scrollbar-thumb { background: rgba(36, 211, 238, .35); border-radius: 8px; }
+  .grid {
+    display: grid; gap: 8px;
+    grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  }
+
+  /* mask 渐显标题：文字像被"擦"出来（教学文档第 6 步） */
+  .hero {
+    grid-column: 1 / -1;
+    margin: 0; padding: 0; font-size: 20px; font-weight: 800; letter-spacing: -.4px;
+    background: linear-gradient(92deg, #24d3ee 0%, #eaf6ff 45%, #24d3ee 90%);
+    -webkit-background-clip: text; background-clip: text;
+    -webkit-text-fill-color: transparent; color: transparent;
+    /* 遮罩层比文字宽 2.5 倍，mask-position 从 100% 扫到 0% */
+    -webkit-mask-image: linear-gradient(90deg, #000 0 40%, rgba(0,0,0,0) 55%);
+    mask-image: linear-gradient(90deg, #000 0 40%, rgba(0,0,0,0) 55%);
+    -webkit-mask-size: 250% 100%; mask-size: 250% 100%;
+    -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
+    -webkit-mask-position: 100% 0; mask-position: 100% 0;   /* 默认整条藏起来 */
+    opacity: 0;
+  }
+
+  /* ============ 入场元素 ============ */
+  .card {
+    display: flex; align-items: center; gap: 9px;
+    padding: 7px 10px; min-width: 0;
+    border-radius: 10px;
+    background: rgba(255, 255, 255, .04);
+    border: 1px solid rgba(255, 255, 255, .1);
+    opacity: 0;                      /* 默认不可见，等 .in 点亮 */
+  }
+  .card .dot {
+    flex: none; width: 8px; height: 8px; border-radius: 50%;
+    background: var(--accent); box-shadow: 0 0 9px rgba(36, 211, 238, .55);
+  }
+  .card .txt { min-width: 0; }
+  .card .t { display: block; font-size: 12.5px; font-weight: 650; }
+  .card .s { display: block; font-size: 11px; color: #8695b4; }
+  .card .n { margin-left: auto; font: 10.5px ui-monospace, Consolas, monospace; color: #6c7893; }
+
+  /* 关键四行：fill-mode 用 both，延迟由 --i × --step 算出来。
+     少了 both，延迟期间元素会先闪成"未动画"的样子再消失。 */
+  .card.in, .hero.in {
+    animation-duration: var(--dur);
+    animation-timing-function: cubic-bezier(.2, .75, .25, 1);
+    animation-fill-mode: both;
+    animation-delay: calc(var(--i, 0) * var(--step));
+  }
+  .card.in { animation-name: rise; }
+  .hero.in { animation-name: wipe; }
+
+  /* 对比开关：勾上就把整条延迟链抹平，同一批同时闪现 */
+  body.flat .card.in, body.flat .hero.in { animation-delay: 0ms; }
+
+  @keyframes rise {
+    from { opacity: 0; transform: translate3d(0, 16px, 0) scale(.985); }
+    to   { opacity: 1; transform: none; }
+  }
+  @keyframes wipe {
+    from { -webkit-mask-position: 100% 0; mask-position: 100% 0; }
+    to   { -webkit-mask-position: 0 0;    mask-position: 0 0; }
+  }
+
+  /* ============ 控制面板 ============ */
+  .panel {
+    display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: center;
+    margin-top: 8px; padding: 9px 12px; border-radius: 12px;
+    background: rgba(255, 255, 255, .04); border: 1px solid rgba(255, 255, 255, .1);
+    font-size: 12px; color: #a9b6d1;
+  }
+  .panel .grp { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
+  .panel input[type="range"] { width: 86px; accent-color: var(--accent); }
+  .panel input[type="radio"], .panel input[type="checkbox"] { accent-color: var(--accent); margin: 0; }
+  .panel output { font-variant-numeric: tabular-nums; color: var(--ink); min-width: 46px; }
+  .panel button {
+    cursor: pointer; color: var(--ink); font: 12px/1 system-ui, sans-serif;
+    padding: 7px 12px; border-radius: 8px;
+    background: rgba(36, 211, 238, .14); border: 1px solid rgba(36, 211, 238, .45);
+  }
+  .panel button:active { transform: translateY(1px); }
+
+  @media (prefers-reduced-motion: reduce) {
+    /* 降级：不隐藏、不平移，元素常态可见，动画整体关掉 */
+    .card, .hero { opacity: 1; animation: none !important; }
+    .hero {
+      -webkit-mask-image: none; mask-image: none;
+      -webkit-text-fill-color: currentColor; color: var(--accent);
+    }
+  }
+</style>
+</head>
+<body>
+  <h2>滚动错峰入场 Stagger Reveal</h2>
+  <p class="note">在下面这个框里滚动 —— 卡片进入视口才开始播，同一批里每张比前一张晚 60ms。</p>
+
+  <div class="stream" id="stream">
+    <div class="grid">
+      <h3 class="hero" id="hero">本周更新</h3>
+      <div class="card"><span class="dot"></span><span class="txt"><span class="t">翻牌计数器上线</span><span class="s">分裂式叶片，rotateX 双向</span></span><span class="n">01</span></div>
+      <div class="card"><span class="dot"></span><span class="txt"><span class="t">液态菜单换滤镜</span><span class="s">色彩矩阵阈值 10 改 20</span></span><span class="n">02</span></div>
+      <div class="card"><span class="dot"></span><span class="txt"><span class="t">磁吸光标修跳变</span><span class="s">半径边界改平方衰减</span></span><span class="n">03</span></div>
+      <div class="card"><span class="dot"></span><span class="txt"><span class="t">光斑卡片加描边</span><span class="s">mask 挖出一圈流光环</span></span><span class="n">04</span></div>
+      <div class="card"><span class="dot"></span><span class="txt"><span class="t">橡皮筋列表</span><span class="s">越界阻尼 0.6 回弹</span></span><span class="n">05</span></div>
+      <div class="card"><span class="dot"></span><span class="txt"><span class="t">条形竞赛图加 FLIP</span><span class="s">换位时柱子互相穿过</span></span><span class="n">06</span></div>
+      <div class="card"><span class="dot"></span><span class="txt"><span class="t">分格验证码</span><span class="s">粘贴一次填满六格</span></span><span class="n">07</span></div>
+      <div class="card"><span class="dot"></span><span class="txt"><span class="t">双色滑块带气泡</span><span class="s">轨道填色 + 数值浮层</span></span><span class="n">08</span></div>
+      <div class="card"><span class="dot"></span><span class="txt"><span class="t">玻璃卡片补噪点</span><span class="s">backdrop 外加色偏层</span></span><span class="n">09</span></div>
+      <div class="card"><span class="dot"></span><span class="txt"><span class="t">金属铭牌刻字</span><span class="s">重复渐变拉丝 + 内阴影</span></span><span class="n">10</span></div>
+      <div class="card"><span class="dot"></span><span class="txt"><span class="t">故障风文字</span><span class="s">steps() 配随机切片</span></span><span class="n">11</span></div>
+      <div class="card"><span class="dot"></span><span class="txt"><span class="t">点击撒花限 300</span><span class="s">粒子带上重力与阻尼</span></span><span class="n">12</span></div>
+      <div class="card"><span class="dot"></span><span class="txt"><span class="t">小宠物跟随</span><span class="s">按速度切走 / 跑 / 坐</span></span><span class="n">13</span></div>
+      <div class="card"><span class="dot"></span><span class="txt"><span class="t">环形进度仪表</span><span class="s">conic-gradient 挖中心</span></span><span class="n">14</span></div>
+      <div class="card"><span class="dot"></span><span class="txt"><span class="t">心跳迷你折线</span><span class="s">dashOffset 推进波形</span></span><span class="n">15</span></div>
+      <div class="card"><span class="dot"></span><span class="txt"><span class="t">长按进度菜单</span><span class="s">走满一圈才触发</span></span><span class="n">16</span></div>
+      <div class="card"><span class="dot"></span><span class="txt"><span class="t">可搜索下拉</span><span class="s">方向键 + 焦点锁定</span></span><span class="n">17</span></div>
+      <div class="card"><span class="dot"></span><span class="txt"><span class="t">手绘风雷达图</span><span class="s">极坐标点位加抖动</span></span><span class="n">18</span></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <span class="grp" role="radiogroup" aria-label="错峰对比开关">
+      <label><input type="radio" name="stg" id="rStagger" checked> 错峰 60ms</label>
+      <label><input type="radio" name="stg" id="rFlat"> 关闭错峰</label>
+    </span>
+    <label class="grp">时长
+      <input type="range" id="sDur" min="200" max="1000" step="20" value="520">
+      <output id="oDur">520ms</output>
+    </label>
+    <label class="grp"><input type="checkbox" id="cLoop"> 来回都触发</label>
+    <button id="bReplay" type="button" aria-label="重播入场动画">⟳ 重播</button>
+  </div>
+  <p class="hint">切到「关闭错峰」再点重播：同一批卡片同时闪现，出场没有先后。两者总时长一样。</p>
+
+<script>
+(function () {
+  'use strict';
+
+  var stream = document.getElementById('stream');
+  var targets = Array.prototype.slice.call(document.querySelectorAll('.card, .hero'));
+  var CFG = {
+    once: true,      // true：入场后 unobserve，只播一次；false：进出反复播
+    threshold: 0.2   // 露出 20% 才算进入视口，避免擦边就触发
+  };
+
+  /* root 传滚动容器本身，判定的基准框就和实际被裁的东西一致。
+     不传（用浏览器视口）在这个 demo 里也能触发，因为相交框会被祖先裁剪，
+     但 threshold 的分母变成视口，容器只露一半时同样的 0.2 就不是同一个时机了。 */
+  var io = new IntersectionObserver(function (entries) {
+    var entering = [];
+    entries.forEach(function (en) {
+      if (en.isIntersecting) {
+        entering.push(en);
+      } else if (!CFG.once) {
+        /* 离开视口时把状态清干净，下次进来重新编号、重新播 */
+        en.target.classList.remove('in');
+        en.target.style.removeProperty('--i');
+      }
+    });
+    if (!entering.length) return;
+
+    /* 同一批可能乱序回调，按文档顺序排：靠前的先出场 */
+    entering.sort(function (a, b) {
+      return targets.indexOf(a.target) - targets.indexOf(b.target);
+    });
+    entering.forEach(function (en, k) {
+      var el = en.target;
+      if (el.classList.contains('in')) return;
+      /* 写"本批名次"而不是绝对序号：滚到第 14 张时延迟仍是 0/60/120ms，
+         不会变成 13 × 60 = 780ms */
+      el.style.setProperty('--i', k);
+      el.classList.add('in');
+      if (CFG.once) io.unobserve(el);
+    });
+  }, { root: stream, threshold: CFG.threshold });
+
+  targets.forEach(function (el) { io.observe(el); });
+
+  /* 重播 / 换模式：先抹掉 class 和 --i，再跨一帧重新 observe。
+     同一帧里 remove 再 add 同一个 class，浏览器认为动画从未结束过，不会重放。 */
+  function replay() {
+    targets.forEach(function (el) {
+      el.classList.remove('in');
+      el.style.removeProperty('--i');
+    });
+    io.disconnect();
+    requestAnimationFrame(function () {
+      requestAnimationFrame(function () {
+        targets.forEach(function (el) { io.observe(el); });
+      });
+    });
+  }
+
+  /* ---------------- 控制面板 ---------------- */
+  document.getElementById('rStagger').addEventListener('change', function () {
+    document.body.classList.remove('flat');
+    replay();
+  });
+  document.getElementById('rFlat').addEventListener('change', function () {
+    document.body.classList.add('flat');
+    replay();
+  });
+  var sDur = document.getElementById('sDur'), oDur = document.getElementById('oDur');
+  sDur.addEventListener('input', function () {
+    document.body.style.setProperty('--dur', sDur.value + 'ms');
+    oDur.textContent = sDur.value + 'ms';
+  });
+  document.getElementById('cLoop').addEventListener('change', function () {
+    CFG.once = !this.checked;
+    replay();
+  });
+  document.getElementById('bReplay').addEventListener('click', replay);
+})();
+</script>
+</body>
+</html>

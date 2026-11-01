@@ -1,0 +1,20 @@
+{
+  "id": "range-slider",
+  "what": "值和键盘全部交给原生 input[type=range]，只把轨道和拇指换成自绘：左侧填充靠一个由 JS 写入的 --p 当渐变硬标，拇指上方挂数值气泡。和 accent-color 一行的写法相比，这里能控制轨道厚度、拇指形状和气泡，步进与边界行为仍然和原生一致。",
+  "points": [
+    { "k": "appearance:none × 2", "v": "WebKit 与 Firefox 的 thumb 伪元素要各写一遍，否则 Firefox 继续画系统样式" },
+    { "k": "runnable-track 显式高度", "v": "不写高度时拇指与轨道不在同一水平线；拇指还要 margin-top 补居中" },
+    { "k": "--p 当渐变硬标", "v": "linear-gradient(90deg, accent var(--p), track var(--p)) 一次出双色，frac 要减 MIN" },
+    { "k": "clamp 气泡定位", "v": "left: clamp(半宽, 拇指中心, 100% - 半宽)，端点不裁切；代价是端点上少跟随几像素" },
+    { "k": "aria-valuetext 分工", "v": "读屏器念 valuetext 所以能带单位，output 只是给人眼看的读数，这里标了 aria-hidden" },
+    { "k": "pointer-events 只给拇指", "v": "双滑块靠它解开重叠遮挡，代价是点轨道跳转失效" }
+  ],
+  "tryIt": [
+    "Tab 聚焦拇指后连按 → 与 PageUp，比较步长 1 / 10 / 50 的差别",
+    "拖到最左与最右，看气泡停在容器内而不是被裁掉",
+    "切到「双」模式，把下限一直往右推，确认它让开一个 step 而不是咬住上限",
+    "勾上 ¥ 前缀，再用读屏器或系统朗读听 aria-valuetext 念出的单位"
+  ],
+  "trap": "只给 ::-webkit-slider-thumb 写了 appearance:none：Chrome 一切正常，Firefox 里拇指还是系统白圆，width/height 和背景全不生效。原因是两套内核的伪元素前缀互不相干。修法是把 ::-moz-range-thumb 也完整写一遍，并且 Firefox 不需要那条用于居中的 margin-top。",
+  "suite": "价格筛选、音量、亮度、进度拖拽这类连续值。离散档位（该用 radio 组）和需要精确输入的场景不适合，那种旁边要留一个数字输入框。"
+}

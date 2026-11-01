@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>鼠标追随光斑卡片 · Widget Lab</title>
+<style>
+  /* ============ 画布 ============ */
+  :root {
+    --bg: #0e1119;
+    --ink: #e9edf6;
+    --sub: #8695b4;
+    --accent: #24d3ee;
+    --accent2: #7c5cff;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 18px 20px 16px;
+    background:
+      radial-gradient(110% 80% at 10% -20%, #1b2140 0%, transparent 60%),
+      radial-gradient(90% 70% at 100% 120%, #14303a 0%, transparent 55%),
+      var(--bg);
+    color: var(--ink);
+    font: 13.5px/1.55 system-ui, "PingFang SC", "Microsoft YaHei", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  h2 { margin: 0 0 3px; font-size: 15px; letter-spacing: -.2px; }
+  p.note { margin: 0 0 14px; color: var(--sub); font-size: 12.5px; }
+
+  /* ============ 卡片 ============ */
+  .stage { display: flex; gap: 14px; align-items: stretch; padding-bottom: 14px; }
+
+  .card {
+    /* 关键 1：光斑坐标作为"元素自己的变量"声明，默认值把光斑甩在卡片外，
+       所以未 hover 的卡片不会有残留高光。JS 只覆盖当前 hover 的那一张。 */
+    --mx: 50%; --my: -20%;
+    /* 关键 2：半径与亮度也放在卡片上，面板用 var() 中转，
+       这样"整站参数"改一次，每张卡片都吃到，又不会被写到 :root 上串位。 */
+    --r: var(--spot-r, 150px);
+    --a: var(--spot-a, .18);
+    position: relative;
+    flex: 1 1 0; min-width: 0;
+    min-height: 96px;
+    padding: 12px 13px;
+    border-radius: 14px;
+    background: rgba(255, 255, 255, .035);
+    cursor: default;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .card h3 { margin: 0 0 3px; font-size: 13.5px; letter-spacing: -.1px; }
+  .card p { margin: 0; color: var(--sub); font-size: 11.5px; line-height: 1.5; }
+  .card .tag {
+    display: inline-block; margin-top: 8px;
+    padding: 2px 8px; border-radius: 999px;
+    font: 10.5px/1.6 ui-monospace, Consolas, monospace;
+    color: #b8e8f2; background: rgba(36, 211, 238, .12);
+    border: 1px solid rgba(36, 211, 238, .22);
+  }
+  .card .body { position: relative; z-index: 3; }
+
+  /* ---- ① 内部高光：跟着指针的 radial-gradient（z0，压在内容下面） ---- */
+  .card > .glow {
+    position: absolute; inset: 0; z-index: 0;
+    border-radius: inherit;
+    pointer-events: none;
+    background: radial-gradient(circle var(--r) at var(--mx) var(--my),
+      rgba(36, 211, 238, var(--a)) 0%,
+      rgba(124, 92, 255, calc(var(--a) * .55)) 40%,
+      transparent 72%);
+    opacity: 0;
+    transition: opacity .35s ease;   /* 只淡入淡出，位置不做过渡 */
+  }
+
+  /* ---- ② 流动描边：满铺渐变 + mask 挖中间，剩下 1px 环 ---- */
+  .card::before {
+    content: ""; position: absolute; inset: 0; z-index: 1;
+    border-radius: inherit;
+    padding: 1px;                     /* 描边厚度 = 这个 padding */
+    pointer-events: none;
+    background:
+      radial-gradient(circle var(--r) at var(--mx) var(--my),
+        rgba(36, 211, 238, .95) 0%, rgba(124, 92, 255, .5) 36%,
+        rgba(255, 255, 255, .10) 74%),
+      linear-gradient(140deg, rgba(255, 255, 255, .22), rgba(255, 255, 255, .04));
+    /* 两层遮罩：第一层用 content-box 只盖住"扣掉 padding 后的中间"，
+       第二层沿 inset:0 盖满整块；两者做排除运算 → 只剩 padding 那 1px。 */
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    /* 必须写在两个 shorthand 之后：mask 简写会重置 mask-composite */
+    -webkit-mask-composite: xor;      /* WebKit/Blink 老前缀：只有 xor 这个值 */
+    mask-composite: exclude;          /* 标准名 */
+    opacity: .4;
+    transition: opacity .35s ease;
+  }
+
+  /* 亮起来的时机：真悬停 / 键盘聚焦 / 触屏按住。 */
+  .card:hover > .glow, .card:focus-visible > .glow, .card.on > .glow { opacity: 1; }
+  .card:hover::before, .card:focus-visible::before, .card.on::before { opacity: 1; }
+
+  /* ---- ③ 第三张：演示"不做时机控制"的越界残留 ---- */
+  .card .badge {
+    position: absolute; top: 8px; right: 9px; z-index: 4;
+    font: 10px/1 ui-monospace, Consolas, monospace;
+    letter-spacing: .3px; padding: 4px 6px; border-radius: 6px;
+    color: #86c8d8; background: rgba(255, 255, 255, .06);
+    border: 1px solid rgba(255, 255, 255, .1);
+  }
+  /* 常驻 → 指针离开后光斑停在最后一次写进 --mx/--my 的局部坐标上 */
+  .card.raw > .glow, .card.raw::before { opacity: 1; }
+
+  /* ---- 面板开关（写在最后，才能压住上面的 :hover 规则） ---- */
+  body.no-edge .card::before { opacity: 0; }
+
+  /* ============ 控制面板 ============ */
+  .panel {
+    display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: center;
+    padding: 10px 13px; border-radius: 12px;
+    background: rgba(255, 255, 255, .04);
+    border: 1px solid rgba(255, 255, 255, .1);
+    font-size: 12px; color: #a9b6d1;
+  }
+  .panel label { display: flex; align-items: center; gap: 7px; white-space: nowrap; cursor: pointer; }
+  .panel input[type="range"] { width: 84px; accent-color: var(--accent); }
+  .panel output { font-variant-numeric: tabular-nums; color: var(--ink); min-width: 36px; }
+  .hint { margin: 9px 0 0; color: #6c7893; font-size: 11px; }
+  code { font: 11px ui-monospace, Consolas, monospace; color: #b8c6e6; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .card > .glow, .card::before { transition: none; }
+  }
+</style>
+</head>
+<body>
+  <h2>鼠标追随光斑卡片 Spotlight Card</h2>
+  <p class="note">指针在卡片里滑动 —— 高光与描边跟着走；移出卡片后淡出，而不是停在原地。</p>
+
+  <div class="stage" id="stage">
+    <article class="card" tabindex="0">
+      <span class="glow"></span>
+      <div class="body">
+        <h3>局部坐标</h3>
+        <p><code>--mx/--my</code> 写在卡片自己身上，多张卡片互不干扰。</p>
+        <span class="tag">element-scoped var</span>
+      </div>
+    </article>
+
+    <article class="card" tabindex="0">
+      <span class="glow"></span>
+      <div class="body">
+        <h3>双层遮罩</h3>
+        <p>渐变铺满整块，再用 <code>mask-composite</code> 挖出 1px 环。</p>
+        <span class="tag">content-box / border-box</span>
+      </div>
+    </article>
+
+    <article class="card" tabindex="0" id="rawCard">
+      <span class="glow"></span>
+      <span class="badge" id="rawBadge">hover 才淡入</span>
+      <div class="body">
+        <h3>越界对照</h3>
+        <p>这张专门做对比：取消右侧勾选，光斑离开后就不消失。</p>
+        <span class="tag">时机控制</span>
+      </div>
+    </article>
+  </div>
+
+  <div class="panel">
+    <label>光斑半径
+      <input type="range" id="sRadius" min="60" max="300" step="10" value="150" aria-label="光斑半径">
+      <output id="oRadius">150px</output>
+    </label>
+    <label>亮度
+      <input type="range" id="sAlpha" min="0.04" max="0.42" step="0.02" value="0.18" aria-label="光斑亮度">
+      <output id="oAlpha">0.18</output>
+    </label>
+    <label><input type="checkbox" id="cEdge" checked> 流动描边</label>
+    <label><input type="checkbox" id="cFix" checked> 第三张 hover 才淡入</label>
+  </div>
+  <p class="hint">半径拉到 <code>300</code> 看三张卡片糊成一片；取消最后一个勾选，指针移出第三张后高光留在原地 —— 这就是"跟随越界"。</p>
+
+<script>
+(function () {
+  'use strict';
+
+  var stage = document.getElementById('stage');
+  var cards = Array.prototype.slice.call(stage.querySelectorAll('.card'));
+
+  /* ---------- rect 缓存：只在"可能失效"时量一次 ---------- */
+  var dirty = true;
+  function mark() { dirty = true; }
+  window.addEventListener('scroll', mark, { passive: true });
+  window.addEventListener('resize', mark);
+  window.addEventListener('keyup', mark);        /* 键盘操作可能改变布局 */
+
+  function flushRects() {
+    if (!dirty) return;
+    for (var i = 0; i < cards.length; i++) {
+      cards[i].__r = cards[i].getBoundingClientRect();
+    }
+    dirty = false;
+  }
+
+  /* ---------- 事件里只记坐标，写样式统一收进一帧 ---------- */
+  var pending = null, rafId = null;
+  function schedule(el, x, y) {
+    pending = { el: el, x: x, y: y };
+    if (rafId === null) rafId = requestAnimationFrame(write);
+  }
+  function write() {
+    rafId = null;
+    if (!pending) return;
+    var p = pending; pending = null;
+    flushRects();
+    var b = p.el.__r;
+    /* 视口坐标 → 卡片局部坐标。这两行是整个组件唯一的"跟随"逻辑。 */
+    p.el.style.setProperty('--mx', (p.x - b.left).toFixed(1) + 'px');
+    p.el.style.setProperty('--my', (p.y - b.top).toFixed(1) + 'px');
+  }
+
+  /* 监听容器而不是每张卡片：一次冒泡分发，减少监听器数量。
+     用 closest() 兜住子元素（标题、标签）——它们的 target 不是 .card。 */
+  stage.addEventListener('pointermove', function (e) {
+    var el = e.target.closest ? e.target.closest('.card') : null;
+    if (!el) return;
+    schedule(el, e.clientX, e.clientY);
+  }, { passive: true });
+
+  /* pointerenter 时先按"进入点"播一次坐标，避免第一帧从上一处瞬移；
+     .on 类让触屏按住也能亮（触屏没有 :hover）。 */
+  cards.forEach(function (el) {
+    el.addEventListener('pointerenter', function (e) {
+      dirty = true;
+      flushRects();
+      el.classList.add('on');
+      var b = el.__r;
+      el.style.setProperty('--mx', (e.clientX - b.left).toFixed(1) + 'px');
+      el.style.setProperty('--my', (e.clientY - b.top).toFixed(1) + 'px');
+    });
+    el.addEventListener('pointerleave', function () { el.classList.remove('on'); });
+    el.addEventListener('blur', function () { el.classList.remove('on'); });
+    el.addEventListener('focus', function () {
+      dirty = true;
+      el.style.setProperty('--mx', '50%');
+      el.style.setProperty('--my', '100%');
+    });
+  });
+
+  /* ---------- 控制面板 ---------- */
+  var root = document.documentElement;
+  function bindRange(id, outId, name, fmt) {
+    var inp = document.getElementById(id), out = document.getElementById(outId);
+    var run = function () {
+      root.style.setProperty(name, inp.value + (name === '--spot-a' ? '' : 'px'));
+      out.textContent = fmt(inp.value);
+    };
+    inp.addEventListener('input', run);
+    run();
+  }
+  bindRange('sRadius', 'oRadius', '--spot-r', function (v) { return v + 'px'; });
+  bindRange('sAlpha', 'oAlpha', '--spot-a', function (v) { return v; });
+
+  document.getElementById('cEdge').addEventListener('change', function () {
+    document.body.classList.toggle('no-edge', !this.checked);
+  });
+
+  var rawCard = document.getElementById('rawCard');
+  var rawBadge = document.getElementById('rawBadge');
+  document.getElementById('cFix').addEventListener('change', function () {
+    var fixed = this.checked;
+    rawCard.classList.toggle('raw', !fixed);
+    rawBadge.textContent = fixed ? 'hover 才淡入' : '残留中';
+    rawBadge.style.color = fixed ? '#86c8d8' : '#ffcf8f';
+    dirty = true;
+  });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,9 @@
+# 本地工具产物，不进仓库
+.tmp/
+node_modules/
+.DS_Store
+Thumbs.db
+*.log
+
+# tools/shoot.mjs 的临时探针脚本
+tools/_probe.mjs

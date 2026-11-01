@@ -1,0 +1,425 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>拖拽甩卡堆 · Widget Lab</title>
+<style>
+  /* ============ 画布 ============ */
+  :root {
+    --bg: #0e1119;
+    --ink: #e9edf6;
+    --sub: #8695b4;
+    --accent: #7c5cff;
+    --ok: #35d18e;
+    --no: #ff5f9e;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 16px 20px 14px;
+    background:
+      radial-gradient(100% 80% at 8% -14%, #22183f 0%, transparent 58%),
+      radial-gradient(90% 70% at 100% 118%, #14303a 0%, transparent 55%),
+      var(--bg);
+    color: var(--ink);
+    font: 13px/1.55 system-ui, "PingFang SC", "Microsoft YaHei", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  h2 { margin: 0 0 3px; font-size: 15px; letter-spacing: -.2px; }
+  p.note { margin: 0 0 8px; color: var(--sub); font-size: 12.5px; }
+
+  /* 计数、速度读数与两个翻卡按钮，放在牌堆上方 */
+  .topbar {
+    display: flex; align-items: center; gap: 8px;
+    margin: 0 0 6px;
+  }
+  .topbar .btn { padding: 6px 11px; font-size: 11.5px; }
+  .counter {
+    padding: 5px 9px; border-radius: 999px; white-space: nowrap;
+    font: 11px/1 ui-monospace, Consolas, monospace; color: var(--sub);
+    background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.1);
+  }
+  .topbar .vel {
+    color: #6c7893; margin-left: auto; opacity: 0;
+    font: 10.5px/1 ui-monospace, Consolas, monospace;
+    transition: opacity .2s, color .15s;
+  }
+  body.show-vel .vel { opacity: 1; }
+  .vel.hot { color: var(--accent); }
+
+  /* ============ 牌堆 ============ */
+  .deck {
+    position: relative;
+    height: 216px;
+    touch-action: none;                 /* 关键：否则手指横拖会被当成滚动吃掉 */
+    user-select: none; -webkit-user-select: none;
+    outline: none;
+  }
+  .deck:focus-visible { box-shadow: 0 0 0 1px rgba(124, 92, 255, .55); border-radius: 16px; }
+  .cards { position: absolute; inset: 0; }
+
+  .card {
+    position: absolute; left: 50%; top: 0;
+    width: 176px; height: 196px; margin-left: -88px;
+    padding: 11px;
+    border-radius: 16px;
+    border: 1px solid rgba(255, 255, 255, .1);
+    background:
+      linear-gradient(180deg, rgba(255,255,255,.07), rgba(255,255,255,.02)), #161b28;
+    box-shadow: 0 14px 30px -18px rgba(0,0,0,.9);
+    /* --i = 在堆里的层序，只由 render() 改；层间错位用 transform 表达 */
+    transform: translateY(calc(var(--i, 0) * 4px)) scale(calc(1 - var(--i, 0) * .045));
+    z-index: calc(30 - var(--i, 0));
+    transition: transform .4s cubic-bezier(.2, .8, .25, 1);
+    will-change: transform;
+    touch-action: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .card[data-side="no"]   { background: linear-gradient(180deg, rgba(255,95,158,.13), rgba(255,255,255,.02)), #171426; }
+  .card[data-side="like"] { background: linear-gradient(180deg, rgba(53,209,142,.13), rgba(255,255,255,.02)), #131d24; }
+  .card.top { cursor: grab; }
+  .card:not(.top) { pointer-events: none; }
+  .card.dragging { transition: none; cursor: grabbing; }   /* 拖动中绝不能有过渡 */
+  .card.flying { transition: transform .5s cubic-bezier(.3, .6, .3, 1), opacity .48s .1s; }
+  .card.gone { display: none; }
+
+  .face {
+    height: 96px; border-radius: 12px;
+    display: grid; place-items: center;
+    font-size: 23px; font-weight: 700; letter-spacing: .5px; color: #fff;
+    background: linear-gradient(135deg, var(--c1, #7c5cff), var(--c2, #24d3ee));
+    position: relative; overflow: hidden;
+  }
+  .face::after {
+    content: ""; position: absolute; inset: 0;
+    background: radial-gradient(60% 45% at 30% 20%, rgba(255,255,255,.32), transparent 70%);
+  }
+  .name { margin: 9px 0 2px; font-size: 14px; font-weight: 650; }
+  .name span { color: var(--sub); font-weight: 400; }
+  .meta { margin: 0; color: var(--sub); font-size: 11.5px; }
+  .tags { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
+  .tags b {
+    font: 500 10.5px/1 system-ui; padding: 4px 7px; border-radius: 999px;
+    color: #cdd7ea; background: rgba(255,255,255,.06);
+    border: 1px solid rgba(255,255,255,.09);
+  }
+
+  /* 方向提示：右 = 喜欢，左 = 不看 */
+  .stamp {
+    position: absolute; top: 12px; padding: 4px 9px;
+    font: 700 11px/1 ui-monospace, Consolas, monospace; letter-spacing: 1px;
+    border: 2px solid currentColor; border-radius: 7px;
+    opacity: 0; transition: opacity .15s; pointer-events: none;
+  }
+  .stamp.like { right: 11px; color: var(--ok); transform: rotate(11deg); }
+  .stamp.no   { left: 11px; color: var(--no); transform: rotate(-11deg); }
+  /* armed = |vx| 已过阈值；neg 标记方向，只亮对应那一边 */
+  .card.armed .stamp.like { opacity: 1; }
+  .card.armed.neg .stamp.like { opacity: 0; }
+  .card.armed.neg .stamp.no { opacity: 1; }
+
+  /* 刷完之后的收尾层 */
+  .done {
+    position: absolute; inset: 0; z-index: 45;
+    display: none; place-items: center; text-align: center;
+    border-radius: 16px; background: rgba(14, 17, 25, .82);
+  }
+  .done.on { display: grid; }
+  .done p { margin: 0 0 12px; color: var(--sub); font-size: 12.5px; }
+  .done b { display: block; color: var(--ink); font-size: 14px; margin-bottom: 4px; }
+
+  /* ============ 按钮 / 面板 ============ */
+  .btn {
+    font: 600 12px/1 system-ui; color: var(--ink);
+    padding: 9px 13px; border-radius: 10px; cursor: pointer;
+    background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.14);
+    transition: background .2s, transform .1s;
+  }
+  .btn:hover { background: rgba(255,255,255,.11); }
+  .btn:active { transform: scale(.96); }
+  .btn.ok { border-color: rgba(53,209,142,.5); color: #9cf0c8; }
+  .btn.no { border-color: rgba(255,95,158,.5); color: #ffb3ce; }
+
+  .panel {
+    display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center;
+    margin-top: 11px; padding: 10px 13px; border-radius: 12px;
+    background: rgba(255, 255, 255, .04);
+    border: 1px solid rgba(255, 255, 255, .1);
+    font-size: 12px; color: #a9b6d1;
+  }
+  .panel label { display: flex; align-items: center; gap: 7px; white-space: nowrap; cursor: pointer; }
+  .panel input[type="range"] { width: 76px; accent-color: var(--accent); }
+  .panel output { font-variant-numeric: tabular-nums; color: var(--ink); min-width: 52px; }
+  .panel .spacer { flex: 1 1 auto; }
+  .hint { margin: 8px 0 0; color: #6c7893; font-size: 11px; }
+  code { font: 11px ui-monospace, Consolas, monospace; color: #b8c6e6; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .card, .card.flying { transition-duration: .08s; }
+  }
+</style>
+</head>
+<body>
+  <h2>拖拽甩卡堆 Drag &amp; Snap Cards</h2>
+  <p class="note">抓住最上面那张往左右拖：甩得快就飞出去，拖过半宽也算，慢慢挪开则回弹。</p>
+
+  <div class="topbar">
+    <span class="counter" id="counter" role="status" aria-live="polite">剩 6 张</span>
+    <span class="vel" id="vel" aria-hidden="true">vx 0 px/s</span>
+    <button class="btn no" id="kNo" type="button" aria-label="向左翻卡，不看这张">← 不看</button>
+    <button class="btn ok" id="kYes" type="button" aria-label="向右翻卡，喜欢这张">喜欢 →</button>
+  </div>
+
+  <div class="deck" id="deck" tabindex="0" role="group" aria-label="可拖拽的卡片堆，左右方向键翻卡">
+    <div class="cards" id="cards">
+      <!-- 6 张卡片，示例数据直接写死 -->
+      <article class="card" data-side="like" style="--c1:#7c5cff;--c2:#24d3ee">
+        <span class="stamp like">LIKE</span><span class="stamp no">NOPE</span>
+        <div class="face">阿蓝</div>
+        <h3 class="name">阿蓝 <span>26</span></h3>
+        <p class="meta">产品经理 · 1.2km</p>
+        <div class="tags"><b>爬山</b><b>猫</b><b>手冲</b></div>
+      </article>
+
+      <article class="card" data-side="no" style="--c1:#ff5f9e;--c2:#f7b955">
+        <span class="stamp like">LIKE</span><span class="stamp no">NOPE</span>
+        <div class="face">小周</div>
+        <h3 class="name">小周 <span>29</span></h3>
+        <p class="meta">前端 · 3.4km</p>
+        <div class="tags"><b>键盘</b><b>夜跑</b><b>桌游</b></div>
+      </article>
+
+      <article class="card" data-side="like" style="--c1:#24d3ee;--c2:#35d18e">
+        <span class="stamp like">LIKE</span><span class="stamp no">NOPE</span>
+        <div class="face">Vera</div>
+        <h3 class="name">Vera <span>31</span></h3>
+        <p class="meta">医生 · 0.8km</p>
+        <div class="tags"><b>潜水</b><b>爵士</b><b>狗</b></div>
+      </article>
+
+      <article class="card" data-side="no" style="--c1:#f7b955;--c2:#ff5f9e">
+        <span class="stamp like">LIKE</span><span class="stamp no">NOPE</span>
+        <div class="face">老陈</div>
+        <h3 class="name">老陈 <span>28</span></h3>
+        <p class="meta">老师 · 5.1km</p>
+        <div class="tags"><b>足球</b><b>露营</b><b>相声</b></div>
+      </article>
+
+      <article class="card" data-side="like" style="--c1:#7c5cff;--c2:#ff5f9e">
+        <span class="stamp like">LIKE</span><span class="stamp no">NOPE</span>
+        <div class="face">Momo</div>
+        <h3 class="name">Momo <span>24</span></h3>
+        <p class="meta">设计师 · 2.7km</p>
+        <div class="tags"><b>插画</b><b>黑胶</b><b>烘焙</b></div>
+      </article>
+
+      <article class="card" data-side="no" style="--c1:#35d18e;--c2:#24d3ee">
+        <span class="stamp like">LIKE</span><span class="stamp no">NOPE</span>
+        <div class="face">阿七</div>
+        <h3 class="name">阿七 <span>27</span></h3>
+        <p class="meta">健身教练 · 1.9km</p>
+        <div class="tags"><b>举铁</b><b>骑行</b><b>素食</b></div>
+      </article>
+    </div>
+
+    <div class="done" id="done">
+      <div>
+        <p><b>这一批刷完了</b>剩 0 张，可以重置再来一次</p>
+        <button class="btn" id="reset" type="button">再刷一次</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <label>速度阈值
+      <input type="range" id="sTh" min="120" max="1400" step="40" value="520" aria-label="判定甩出的速度阈值">
+      <output id="oTh">520 px/s</output>
+    </label>
+    <label>旋转系数 k
+      <input type="range" id="sRot" min="0" max="0.06" step="0.002" value="0.02" aria-label="旋转系数 k">
+      <output id="oRot">0.020</output>
+    </label>
+    <label><input type="checkbox" id="cVel"> 显示速度数值</label>
+  </div>
+  <p class="hint">阈值拉到 <code>1400</code>，基本只能靠"拖过半宽"翻卡；拉到 <code>120</code>，轻轻一碰就飞走。勾上显示速度，慢速拖到一半停住再松手，读数会掉到接近 0，卡片于是回弹。</p>
+
+<script>
+(function () {
+  'use strict';
+
+  var deck = document.getElementById('deck');
+  var wrap = document.getElementById('cards');
+  var all = Array.prototype.slice.call(wrap.querySelectorAll('.card'));
+  var counterEl = document.getElementById('counter');
+  var velEl = document.getElementById('vel');
+  var doneEl = document.getElementById('done');
+
+  var CFG = {
+    th: 520,      // 判定甩出的速度阈值，px/s
+    k: 0.02,      // 旋转系数：每 px/s 转多少度
+    maxRot: 20,   // 拖动时旋转角上限，度
+    win: 120      // 速度采样窗，毫秒
+  };
+
+  var order = all.slice();   // 当前剩余顺序，order[0] 是手上那张
+  var ptr = { id: -1, card: null, x0: 0, y0: 0, dx: 0, dy: 0 };
+  var samples = [];
+  var rafId = null;
+
+  /* ---------- 层序渲染：只改 --i，错位交给 CSS ---------- */
+  function render() {
+    order.forEach(function (el, i) {
+      el.style.setProperty('--i', i);
+      el.classList.toggle('top', i === 0);
+    });
+    counterEl.textContent = '剩 ' + order.length + ' 张';
+    doneEl.classList.toggle('on', order.length === 0);
+  }
+
+  /* ---------- 采样与瞬时速度 ---------- */
+  function pushSample(x, y, t) {
+    samples.push({ x: x, y: y, t: t });
+    /* 只留最近 5 个点，并丢掉超出时间窗的旧点。
+       末帧停顿会让"最后两帧"的速度掉到接近 0，窗口平均才不会被骗。 */
+    while (samples.length > 5) samples.shift();
+    while (samples.length > 2 && t - samples[0].t > CFG.win) samples.shift();
+  }
+  function velocity() {
+    if (samples.length < 2) return { vx: 0, vy: 0 };
+    var a = samples[0], b = samples[samples.length - 1];
+    var dt = Math.max(1, b.t - a.t);
+    return { vx: (b.x - a.x) / dt * 1000, vy: (b.y - a.y) / dt * 1000 };
+  }
+  function clamp(v, m) { return v > m ? m : (v < -m ? -m : v); }
+
+  /* ---------- 拖动中：一帧只写一次 transform ---------- */
+  function paint() {
+    rafId = null;
+    if (!ptr.card) return;
+    var v = velocity();
+    /* 旋转有两个来源：速度提供"甩"的角度，位移提供基础倾斜。 */
+    var rot = clamp(v.vx * CFG.k + ptr.dx * 0.05, CFG.maxRot);
+    ptr.card.style.transform =
+      'translate3d(' + ptr.dx.toFixed(1) + 'px,' + (ptr.dy * 0.35).toFixed(1) + 'px,0) ' +
+      'rotate(' + rot.toFixed(2) + 'deg)';
+    var fast = Math.abs(v.vx) > CFG.th;
+    ptr.card.classList.toggle('armed', fast);
+    ptr.card.classList.toggle('neg', v.vx < 0);
+    velEl.textContent = 'vx ' + Math.round(v.vx) + ' px/s';
+    velEl.classList.toggle('hot', fast);
+  }
+  function schedulePaint() {
+    if (rafId === null) rafId = requestAnimationFrame(paint);
+  }
+
+  deck.addEventListener('pointerdown', function (e) {
+    var el = e.target.closest ? e.target.closest('.card') : null;
+    if (!el || !el.classList.contains('top')) return;
+    /* 阻止文本选中与浏览器自带拖拽。代价是 pointerdown 的默认焦点行为也没了，
+       所以手动 focus 牌堆，保证键盘还能用。 */
+    e.preventDefault();
+    deck.focus();
+    ptr.id = e.pointerId; ptr.card = el;
+    ptr.x0 = e.clientX; ptr.y0 = e.clientY; ptr.dx = 0; ptr.dy = 0;
+    samples = [{ x: e.clientX, y: e.clientY, t: e.timeStamp }];
+    /* 捕获指针：指针移出卡片之后，move/up 仍然发给它。 */
+    if (el.setPointerCapture) el.setPointerCapture(e.pointerId);
+    el.classList.add('dragging');
+  }, { passive: false });
+
+  deck.addEventListener('pointermove', function (e) {
+    if (ptr.card === null || e.pointerId !== ptr.id) return;
+    ptr.dx = e.clientX - ptr.x0;
+    ptr.dy = e.clientY - ptr.y0;
+    pushSample(e.clientX, e.clientY, e.timeStamp);
+    schedulePaint();
+  });
+
+  function release(e) {
+    if (ptr.card === null || (e && e.pointerId !== ptr.id)) return;
+    var el = ptr.card;
+    if (el.hasPointerCapture && el.hasPointerCapture(ptr.id)) el.releasePointerCapture(ptr.id);
+    var v = velocity();
+    var halfW = el.offsetWidth / 2;
+    /* 判定：|vx| 过阈值就甩出；没过但 |dx| 超过半宽也算。
+       方向优先看速度，速度不足时看位移符号。 */
+    var fast = Math.abs(v.vx) > CFG.th;
+    var far = Math.abs(ptr.dx) > halfW;
+    el.classList.remove('dragging', 'armed', 'neg');
+    if (fast || far) fly(el, (fast ? v.vx : ptr.dx) > 0 ? 1 : -1, v.vx);
+    else el.style.transform = '';   /* 回弹：清空内层，让基础规则的 transition 接管 */
+    ptr.card = null; ptr.id = -1; samples = [];
+    velEl.classList.remove('hot');
+    if (rafId !== null) { cancelAnimationFrame(rafId); rafId = null; }
+  }
+  deck.addEventListener('pointerup', release);
+  deck.addEventListener('pointercancel', release);   /* 手势被系统抢走也要收尾 */
+
+  function fly(el, dir, vx) {
+    var far = Math.max(320, deck.offsetWidth * 0.75);
+    var dy = ptr.dy * 0.35;
+    el.classList.add('flying');
+    el.style.transform =
+      'translate3d(' + (dir * far).toFixed(0) + 'px,' + (dy + dir * 24).toFixed(0) + 'px,0) ' +
+      'rotate(' + clamp(dir * 26 + vx * CFG.k, 46).toFixed(1) + 'deg)';
+    el.style.opacity = '0';
+    order = order.filter(function (x) { return x !== el; });
+    render();
+    var settled = false;
+    function settle() {
+      if (settled) return;
+      settled = true;
+      el.removeEventListener('transitionend', settle);
+      el.classList.remove('flying');
+      el.classList.add('gone');
+      el.style.transform = '';
+      el.style.opacity = '';
+    }
+    el.addEventListener('transitionend', settle);
+    setTimeout(settle, 900);   /* reduced-motion 下过渡极短，兜底保证一定收尾 */
+  }
+
+  /* ---------- 键盘与按钮翻卡 ---------- */
+  function flipByButton(dir) {
+    var el = order[0];
+    if (!el) return;
+    ptr.dy = 0;
+    fly(el, dir, dir * (CFG.th + 200));
+  }
+  document.getElementById('kNo').addEventListener('click', function () { flipByButton(-1); });
+  document.getElementById('kYes').addEventListener('click', function () { flipByButton(1); });
+  document.addEventListener('keydown', function (e) {
+    if (e.target && /^(INPUT|TEXTAREA|SELECT|BUTTON)$/.test(e.target.tagName)) return;
+    if (e.key === 'ArrowLeft') { flipByButton(-1); e.preventDefault(); }
+    else if (e.key === 'ArrowRight') { flipByButton(1); e.preventDefault(); }
+  });
+
+  document.getElementById('reset').addEventListener('click', function () {
+    all.forEach(function (el) {
+      el.classList.remove('gone', 'flying', 'dragging', 'armed', 'neg');
+      el.style.transform = '';
+      el.style.opacity = '';
+    });
+    order = all.slice();
+    render();
+    deck.focus();
+  });
+
+  /* ---------- 控制面板 ---------- */
+  function bindRange(id, outId, fn, fmt) {
+    var inp = document.getElementById(id), out = document.getElementById(outId);
+    var run = function () { fn(inp.value); out.textContent = fmt(inp.value); };
+    inp.addEventListener('input', run);
+    run();
+  }
+  bindRange('sTh', 'oTh', function (v) { CFG.th = parseFloat(v); }, function (v) { return v + ' px/s'; });
+  bindRange('sRot', 'oRot', function (v) { CFG.k = parseFloat(v); }, function (v) { return parseFloat(v).toFixed(3); });
+  document.getElementById('cVel').addEventListener('change', function () {
+    document.body.classList.toggle('show-vel', this.checked);
+  });
+
+  render();
+})();
+</script>
+</body>
+</html>

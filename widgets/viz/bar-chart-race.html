@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>动态条形竞赛图 · Widget Lab</title>
+<style>
+  /* ============ 画布与基调 ============ */
+  :root {
+    --bg: #0e1119;
+    --ink: #e9edf6;
+    --sub: #8695b4;
+    --accent: #7c5cff;
+    --dur: 520ms;            /* FLIP 播放时长，固定值：故意不跟着速度变 */
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 22px 20px;
+    background:
+      radial-gradient(120% 90% at 10% -20%, #1d2340 0%, transparent 60%),
+      radial-gradient(90% 80% at 100% 120%, #22183f 0%, transparent 55%),
+      var(--bg);
+    color: var(--ink);
+    font: 14px/1.6 system-ui, "PingFang SC", "Microsoft YaHei", sans-serif;
+    overflow-x: hidden;
+  }
+  h2 { margin: 0 0 4px; font-size: 15px; letter-spacing: -.2px; }
+  p.note { margin: 0 0 10px; color: var(--sub); font-size: 12.5px; }
+  code { font: 11.5px ui-monospace, Consolas, monospace; color: #b8c6e6; }
+
+  /* ============ 领先者：放进控制面板那一行，省一屏高度 ============ */
+  .leader {
+    display: flex; align-items: center; gap: 7px; margin-left: auto;
+    font-size: 12px; color: #a9b6d1; white-space: nowrap;
+  }
+  .leader .dot { width: 9px; height: 9px; border-radius: 50%; flex: none; background: var(--accent); }
+  .leader b { color: var(--ink); font-weight: 650; }
+  .leader .when { color: var(--sub); font-variant-numeric: tabular-nums; }
+
+  /* ============ 图表：8 行走普通流，名次 = DOM 顺序，换位靠 FLIP ============ */
+  .plot { position: relative; counter-reset: rank; }
+  .row {
+    position: relative;
+    display: flex; align-items: center; gap: 8px;
+    height: 17px; margin-bottom: 1px;
+    will-change: transform;                 /* 每行独立合成层，位移只走 GPU */
+  }
+  /* 名次由 DOM 顺序自动得出：重排 DOM 后编号跟着变，不用 JS 写文本。
+     ::before 在主列左侧，不占宽度，避免行重排时主列发生横向位移。 */
+  .row::before {
+    content: counter(rank);
+    counter-increment: rank;
+    position: absolute; left: 2px; top: 50%; transform: translateY(-50%);
+    font: 10px ui-monospace, Consolas, monospace; color: #55627d;
+    font-variant-numeric: tabular-nums;
+  }
+  .name {
+    flex: none; width: 72px; text-align: right;
+    font-size: 11px; color: #a9b6d1;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .track {
+    position: relative; flex: 1 1 auto; height: 13px;
+    /* 数值轴网格：一个 25% 宽的背景块里画 1px 竖线，靠 background-repeat
+       平铺出 0 / 25 / 50 / 75，和下方刻度共用同一套百分比 */
+    background-image: linear-gradient(90deg, rgba(255, 255, 255, .1) 0 1px, transparent 1px);
+    background-size: 25% 100%;
+  }
+  .fill {
+    position: absolute; left: 0; top: 0; bottom: 0; width: 100%;
+    border-radius: 3px; transform-origin: left center; transform: scaleX(0);
+    transition: transform var(--dur) cubic-bezier(.22, .7, .25, 1);
+  }
+  /* 数值标签：不写 transition，位置每帧由 rAF 里的 lerp 推着走 */
+  .num {
+    position: absolute; left: 0; top: 50%;
+    transform: translate(0, -50%);
+    font-size: 10.5px; font-variant-numeric: tabular-nums; color: #cdd7ea;
+    pointer-events: none; white-space: nowrap;
+  }
+  .num i { font-style: normal; color: var(--sub); margin-left: 3px; }
+  .pad { flex: none; width: 60px; }        /* 给末端标签预留的缓冲区 */
+
+  /* ============ 数值轴：复用 .row 的三段结构，天然和柱子对齐 ============ */
+  .axis { height: 13px; margin-bottom: 0; will-change: auto; }
+  .axis .name { font-size: 10px; color: #6c7893; }
+  .axis .cell { position: relative; flex: 1 1 auto; }
+  .axis .cell span {
+    position: absolute; top: 0; font-size: 10px; color: #6c7893;
+    font-variant-numeric: tabular-nums; transform: translateX(-50%);
+  }
+  .axis .cell span:first-child { transform: none; }
+  .axis .cell span:last-child { transform: translateX(-100%); }
+
+  /* ============ 控制面板 ============ */
+  .panel {
+    display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center;
+    margin-top: 10px; padding: 7px 12px; border-radius: 12px;
+    background: rgba(255, 255, 255, .04); border: 1px solid rgba(255, 255, 255, .1);
+    font-size: 12px; color: #a9b6d1;
+  }
+  .panel label { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+  .panel input[type="range"] { width: 74px; accent-color: var(--accent); }
+  .panel output { font-variant-numeric: tabular-nums; color: var(--ink); min-width: 32px; }
+  .btn {
+    font: 600 12px/1 system-ui, sans-serif; color: var(--ink);
+    padding: 6px 11px; border-radius: 9px; cursor: pointer;
+    background: rgba(255, 255, 255, .07); border: 1px solid rgba(255, 255, 255, .14);
+    transition: background .2s, border-color .2s, transform .12s;
+  }
+  .btn:hover { background: rgba(124, 92, 255, .22); border-color: rgba(124, 92, 255, .6); }
+  .btn:active { transform: translateY(1px); }
+  .btn.primary { background: rgba(124, 92, 255, .3); border-color: rgba(124, 92, 255, .7); }
+  .tip { margin: 6px 0 0; color: #6c7893; font-size: 11.5px; }
+</style>
+</head>
+<body>
+  <h2>动态条形竞赛图 Bar Chart Race</h2>
+  <p class="note">数据：8 个前端框架 12 个年份的热度指数（0–100，虚构）。每换一年重新排名。</p>
+
+  <div class="plot" id="plot"></div>
+  <div class="row axis" id="axis">
+    <span class="name">热度指数 →</span>
+    <span class="cell"></span>
+    <span class="pad"></span>
+  </div>
+
+  <div class="panel">
+    <button class="btn primary" id="bPlay" aria-label="播放或暂停动画">⏸ 暂停</button>
+    <button class="btn" id="bStep" aria-label="前进一帧">⏭ 单步</button>
+    <label>速度
+      <input type="range" id="sSpeed" min="0.4" max="2.5" step="0.1" value="1" aria-label="播放速度">
+      <output id="oSpeed">1.0×</output>
+    </label>
+    <span class="leader">
+      <span class="dot" id="lDot"></span>
+      <span>第一名 <b id="lName">—</b> <span id="lVal">0</span></span>
+      <span class="when">帧 <b id="lIdx">1</b>/12 · <b id="oYear">2014</b></span>
+    </span>
+  </div>
+  <p class="tip">动画时长固定 520ms，帧间隔 = 1150ms ÷ 速度。速度 <code>2.5×</code> 时下一帧会打断上一段过渡，FLIP 靠读 rect 拿到瞬时位置，所以不跳帧。</p>
+
+<script>
+(function () {
+  'use strict';
+
+  /* ---------------- 数据：8 个框架 × 12 个年代，写死在代码里 ---------------- */
+  var YEARS = ['2014', '2015', '2016', '2017', '2018', '2019', '2020', '2021', '2022', '2023', '2024', '2025'];
+  var MAX = 100;                       // 数值轴上限，决定条长与标签位置
+  var SERIES = [
+    { id: 'react',   name: 'React',   color: '#7c5cff', v: [12, 22, 34, 46, 58, 68, 75, 81, 86, 89, 92, 94] },
+    { id: 'vue',     name: 'Vue',     color: '#35d18e', v: [6, 12, 22, 35, 52, 63, 72, 78, 82, 84, 85, 86] },
+    { id: 'angular', name: 'Angular', color: '#ff5f9e', v: [34, 44, 50, 55, 54, 51, 47, 44, 41, 39, 37, 36] },
+    { id: 'svelte',  name: 'Svelte',  color: '#f7b955', v: [0, 1, 3, 8, 16, 27, 38, 47, 55, 61, 66, 70] },
+    { id: 'solid',   name: 'Solid',   color: '#24d3ee', v: [0, 0, 1, 2, 5, 9, 16, 24, 33, 41, 48, 54] },
+    { id: 'preact',  name: 'Preact',  color: '#a6e22e', v: [4, 7, 11, 16, 21, 25, 29, 32, 35, 37, 39, 40] },
+    { id: 'jquery',  name: 'jQuery',  color: '#9aa6c0', v: [78, 82, 79, 70, 58, 47, 37, 29, 22, 17, 13, 10] },
+    { id: 'ember',   name: 'Ember',   color: '#e0653c', v: [20, 26, 30, 32, 30, 26, 22, 18, 15, 12, 10, 10] }
+  ];
+
+  var REDUCE = window.matchMedia &&
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  var plot = document.getElementById('plot');
+
+  /* ---------------- 建行：DOM 顺序 = 名次，行位置交给普通流布局 ---------------- */
+  var rows = SERIES.map(function (s) {
+    var el = document.createElement('div');
+    el.className = 'row';
+    el.innerHTML =
+      '<span class="name">' + s.name + '</span>' +
+      '<span class="track"><span class="fill"></span>' +
+      '<span class="num"><b>0</b><i></i></span></span>' +
+      '<span class="pad"></span>';
+    plot.appendChild(el);
+    var fill = el.querySelector('.fill');
+    /* 颜色按 id 固定，跟着"这一条数据"走，绝不跟着名次变 */
+    fill.style.background = 'linear-gradient(90deg,' + s.color + '55,' + s.color + ')';
+    fill.style.boxShadow = 'inset 0 0 0 1px ' + s.color + '99';
+    return {
+      id: s.id, name: s.name, color: s.color, v: s.v,
+      el: el,
+      fill: fill,
+      num: el.querySelector('.num'),
+      valEl: el.querySelector('.num b'),
+      tagEl: el.querySelector('.num i'),
+      x: 0, disp: 0,     // 标签当前的像素位置 / 当前显示值（lerp 状态）
+      tx: 0, tv: 0,      // 标签目标位置 / 目标值
+      first: 0, last: 0
+    };
+  });
+
+  /* ---------------- 数值轴刻度：与 .track 的网格线共用同一百分比 ---------------- */
+  var axisCell = document.querySelector('#axis .cell');
+  [0, 25, 50, 75, 100].forEach(function (t) {
+    var sp = document.createElement('span');
+    sp.style.left = t + '%';
+    sp.textContent = t;
+    axisCell.appendChild(sp);
+  });
+
+  var TRACK_W = 0;
+  function measure() { TRACK_W = rows[0].num.parentNode.getBoundingClientRect().width; }
+  measure();
+  window.addEventListener('resize', measure);
+
+  var tick = 0, DUR = 520;      // 时长固定：故意不随速度变，高倍速下必然出现"动画没播完就来下一帧"
+  var lName = document.getElementById('lName'),
+      lVal = document.getElementById('lVal'),
+      lDot = document.getElementById('lDot'),
+      lIdx = document.getElementById('lIdx'),
+      oYear = document.getElementById('oYear');
+
+  /* ================= FLIP：一次换位动画 ================= */
+  function setFrame(i, animate) {
+    tick = Math.max(0, Math.min(YEARS.length - 1, i));
+
+    /* ① First —— 先记下每行此刻在屏幕上的真实 top。
+       必须用 getBoundingClientRect：它包含"上一段还没播完的过渡"，
+       所以动画中途插进新一帧也不会跳回起点。 */
+    rows.forEach(function (r) { r.first = r.el.getBoundingClientRect().top; });
+
+    /* ② 改数据 + 重排 DOM。做完这一步，布局里才存在新的位置（Last）。 */
+    var order = rows.slice().sort(function (a, b) {
+      var d = b.v[tick] - a.v[tick];
+      if (d) return d;
+      return a.id < b.id ? -1 : 1;      // 稳定 tie-break：同分按 id，否则名次每帧抖动
+    });
+    order.forEach(function (r) { plot.appendChild(r.el); });
+
+    /* ③ Last —— 再读一次 rect。这次读取本身就会触发 reflow，
+       不读的话浏览器不会告诉你新位置，Invert 的量就算不出来。 */
+    rows.forEach(function (r) { r.last = r.el.getBoundingClientRect().top; });
+
+    /* ④ Invert —— 关掉过渡，把每行用 transform 反向推回 First 的位置。 */
+    rows.forEach(function (r) {
+      r.el.style.transition = 'none';
+      r.el.style.transform = 'translateY(' + (r.first - r.last).toFixed(2) + 'px)';
+    });
+
+    /* ⑤ 强制一次布局：把上面这批 transform 提交掉，
+       否则它会和下面"translateY(0)"被合并成一次样式更新，动画直接消失。
+       读一个和样式无关的布局属性即可，offsetHeight 最便宜。 */
+    void plot.offsetHeight;
+
+    /* ⑥ Play —— 把 transform 收回 0，交还给 transition 播放。 */
+    var dur = animate === false ? 0 : DUR;
+    var tr = dur ? 'transform ' + dur + 'ms cubic-bezier(.22,.7,.25,1)' : 'none';
+    rows.forEach(function (r) {
+      var val = r.v[tick];
+      r.tx = val / MAX * TRACK_W;       // 标签目标：条的末端
+      r.tv = val;
+      r.el.style.transition = tr;
+      r.el.style.transform = 'translateY(0)';
+      /* 条长也走 transform（scaleX）而不是改 width：改 width 又是一次布局重排 */
+      r.fill.style.transition = tr;
+      r.fill.style.transform = 'scaleX(' + (val / MAX) + ')';
+      r.tagEl.textContent = r.id === order[0].id ? '← 第一' : '';
+    });
+
+    var top = order[0];
+    lName.textContent = top.name;
+    lVal.textContent = top.v[tick];
+    lDot.style.background = top.color;
+    lIdx.textContent = tick + 1;
+    oYear.textContent = YEARS[tick];
+    kick();
+  }
+
+  /* ========= 数值标签缓动跟随：一个常驻 rAF，标签被条"拖着走" ========= */
+  var raf = null, last = 0;
+  function loop(t) {
+    var dt = Math.min(64, t - (last || t)); last = t;
+    var k = dt / 16.6667;                        // 归一到 60fps，高刷屏不加速
+    var ease = 1 - Math.pow(1 - 0.16, k);        // 每帧补齐剩余距离的 16%
+    var busy = false;
+
+    for (var i = 0; i < rows.length; i++) {
+      var r = rows[i];
+      r.x += (r.tx - r.x) * ease;                // lerp：位置
+      r.disp += (r.tv - r.disp) * ease;          // lerp：数字本身
+      if (Math.abs(r.tx - r.x) > 0.3 || Math.abs(r.tv - r.disp) > 0.05) busy = true;
+      if (Math.abs(r.tx - r.x) <= 0.3) r.x = r.tx;
+      r.num.style.transform = 'translate(' + r.x.toFixed(1) + 'px,-50%)';
+      r.valEl.textContent = Math.round(r.disp);
+    }
+    /* 播放中常驻；暂停且标签停稳就关掉循环，不留空转的 rAF */
+    if (playing || busy) raf = requestAnimationFrame(loop);
+    else raf = null;
+  }
+  function kick() { if (!raf) { last = 0; raf = requestAnimationFrame(loop); } }
+
+  /* ---------------- 播放器 ---------------- */
+  var playing = false, timer = null, SPEED = 1;
+  var bPlay = document.getElementById('bPlay');
+
+  function schedule() {
+    clearInterval(timer);
+    if (!playing) return;
+    timer = setInterval(function () {
+      setFrame(tick + 1 >= YEARS.length ? 0 : tick + 1, true);
+    }, 1150 / SPEED);
+  }
+  function setPlaying(on) {
+    playing = on;
+    bPlay.textContent = on ? '⏸ 暂停' : '▶ 播放';
+    bPlay.classList.toggle('primary', on);
+    schedule();
+    kick();
+  }
+  bPlay.addEventListener('click', function () { setPlaying(!playing); });
+  document.getElementById('bStep').addEventListener('click', function () {
+    setPlaying(false);
+    setFrame(tick + 1 >= YEARS.length ? 0 : tick + 1, true);
+  });
+  var sSpeed = document.getElementById('sSpeed'), oSpeed = document.getElementById('oSpeed');
+  sSpeed.addEventListener('input', function () {
+    /* 只改帧间隔，动画时长保持 520ms：
+       倍速越高，"上一段还在播、下一帧已到达"的叠加越明显（1.0×→0.42 次重叠，
+       2.5×→1.13 次，即每帧都在打断上一段动画）。FLIP 靠读 rect 拿到瞬时位置，
+       所以打断不会跳帧 —— 这是它相对"改 top + setTimeout"最值钱的区别。 */
+    SPEED = parseFloat(sSpeed.value);
+    oSpeed.textContent = SPEED.toFixed(1) + '×';
+    schedule();
+  });
+  /* 标签目标位置依赖条宽：尺寸变了要重算，并唤醒循环追上去 */
+  window.addEventListener('resize', function () {
+    measure();
+    rows.forEach(function (r) { r.tx = r.v[tick] / MAX * TRACK_W; });
+    kick();
+  });
+
+  /* ---------------- 启动：第 0 帧不播动画先铺好，再让标签从 0 跑起来 -------- */
+  setFrame(0, false);
+  rows.forEach(function (r) { r.x = 0; r.disp = 0; });
+  setPlaying(!REDUCE);
+  kick();
+})();
+</script>
+</body>
+</html>

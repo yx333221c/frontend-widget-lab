@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>3D 翻牌计数器 · Widget Lab</title>
+<style>
+  :root {
+    --bg: #0e1119;
+    --ink: #e9edf6;
+    --accent: #f7b955;
+    --half: 150ms;    /* 单相位时长 = 一次翻牌的一半 */
+    --dh: 52px;       /* 一位数字的高度 */
+    --dw: 38px;       /* 一位数字的宽度 */
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 22px 20px;
+    background:
+      radial-gradient(120% 90% at 12% -12%, #2a2313 0%, transparent 58%),
+      radial-gradient(110% 80% at 100% 112%, #171b26 0%, transparent 55%),
+      var(--bg);
+    color: var(--ink);
+    font: 14px/1.6 system-ui, "PingFang SC", "Microsoft YaHei", sans-serif;
+  }
+  h2 { margin: 0 0 2px; font-size: 15px; letter-spacing: -.2px; }
+  p.note { margin: 0 0 12px; color: #8695b4; font-size: 12.5px; }
+  p.stat { margin: 10px 0 0; font: 11.5px ui-monospace, Consolas, monospace; color: #8a7a55; }
+  p.stat b { color: var(--accent); font-weight: 600; }
+
+  /* ============ 翻牌面板 ============
+     perspective 放在「每一位」上，不是整块面板：这样每位都有自己的灭点，
+     翻起来像四片独立的叶片；放在面板上时边上的两位会明显被斜着拉扯。 */
+  .board { display: flex; gap: 7px; }
+  .digit {
+    position: relative; width: var(--dw); height: var(--dh);
+    border-radius: 5px;
+    perspective: 220px;
+    background: #12161f;
+    box-shadow: 0 6px 16px rgba(0, 0, 0, .5), inset 0 0 0 1px rgba(255, 255, 255, .07);
+  }
+  /* 中缝：静态覆盖层，不参与动画 */
+  .digit::after {
+    content: ""; position: absolute; left: 0; right: 0; top: 50%; height: 1.5px;
+    margin-top: -.75px; z-index: 5; pointer-events: none;
+    background: rgba(0, 0, 0, .62);
+  }
+
+  /* 四层：两张静牌（上/下）+ 两张会翻的中间牌（上/下）。
+     overflow: hidden 是关键 —— 每张牌里的字形都是「整位高度」的盒子，
+     不裁的话半张牌会显示完整数字，上下两半对不上缝。 */
+  .half {
+    position: absolute; left: 0; right: 0; height: 50%;
+    overflow: hidden;
+    backface-visibility: hidden;
+    -webkit-backface-visibility: hidden;
+  }
+  .half.t { top: 0; border-radius: 5px 5px 0 0; background: linear-gradient(#2b3244, #232a3a); }
+  .half.b { bottom: 0; border-radius: 0 0 5px 5px; background: linear-gradient(#1e2432, #171c27); }
+  .num {
+    position: absolute; left: 0; right: 0; height: 200%;
+    display: grid; place-items: center;
+    font: 700 34px/1 ui-monospace, "SF Mono", Consolas, monospace;
+    font-variant-numeric: tabular-nums;
+    color: var(--accent);
+    text-shadow: 0 1px 0 rgba(0, 0, 0, .5);
+    user-select: none;
+  }
+  .half.t .num { top: 0; }
+  .half.b .num { bottom: 0; }   /* 下半牌里，整块盒子对齐到位的底部 */
+
+  /* 会翻的两张：静止时各自停在终态，所以移除动画类不会闪 */
+  .flap { z-index: 3; }
+  .flap.t { transform-origin: bottom center; transform: rotateX(-90deg); }
+  .flap.b { transform-origin: top center;    transform: rotateX(90deg); }
+  .flap.t.go { animation: flapTop var(--half) ease-in both; }
+  .flap.b.go { animation: flapBot var(--half) ease-out var(--half) both; }
+
+  @keyframes flapTop {
+    from { transform: rotateX(0deg); }
+    to   { transform: rotateX(-90deg); }
+  }
+  @keyframes flapBot {
+    from { transform: rotateX(90deg); }
+    to   { transform: rotateX(0deg); }
+  }
+  /* ============ 控制面板 ============ */
+  .panel {
+    display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center;
+    margin-top: 12px; padding: 8px 11px; border-radius: 12px;
+    background: rgba(255, 255, 255, .04); border: 1px solid rgba(255, 255, 255, .1);
+    font-size: 12px; color: #a9b6d1;
+  }
+  .panel .grp { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+  .panel input[type="number"] {
+    width: 72px; padding: 5px 7px; border-radius: 7px; color: var(--ink);
+    background: rgba(0, 0, 0, .3); border: 1px solid rgba(255, 255, 255, .14);
+    font: 12.5px ui-monospace, Consolas, monospace;
+  }
+  .panel input[type="range"] { width: 78px; accent-color: var(--accent); }
+  .panel input[type="checkbox"] { accent-color: var(--accent); margin: 0; }
+  .panel button {
+    cursor: pointer; color: var(--ink); font: 12px/1 system-ui, sans-serif;
+    padding: 6px 10px; border-radius: 7px;
+    background: rgba(247, 185, 85, .13); border: 1px solid rgba(247, 185, 85, .4);
+  }
+  .panel button:active { transform: translateY(1px); }
+  .panel output { color: var(--ink); font-variant-numeric: tabular-nums; min-width: 44px; }
+
+  @media (prefers-reduced-motion: reduce) {
+    /* 降级：叶片不再翻转，数字直接换值 */
+    .flap.t.go, .flap.b.go { animation: none; }
+    .flap.t { transform: none; }
+    .flap.b { transform: none; }
+  }
+</style>
+</head>
+<body>
+  <h2>3D 翻牌计数器 Flip Counter</h2>
+  <p class="note">改一个目标值再按「设定」—— 注意每位滚的趟数不一样，低位翻得多、高位翻得少。</p>
+
+  <div class="board" id="board" role="img" aria-label="计数器 0000"></div>
+  <p class="stat" id="stat">每位翻牌：<b>0 / 0 / 0 / 0</b></p>
+
+  <div class="panel">
+    <span class="grp">
+      <input type="number" id="iTarget" min="0" max="9999" step="1" value="427" aria-label="目标值">
+      <button id="bGo" type="button">设定</button>
+    </span>
+    <span class="grp">
+      <button id="bUp" type="button" aria-label="加一">+1</button>
+      <button id="bDown" type="button" aria-label="减一">-1</button>
+      <button id="bRand" type="button">随机跳转</button>
+      <button id="bRoll" type="button">滚到 9999</button>
+    </span>
+    <label class="grp"><input type="checkbox" id="cSync"> 全部同时翻</label>
+    <label class="grp">时长
+      <input type="range" id="sT" min="140" max="520" step="20" value="300">
+      <output id="oT">300ms</output>
+    </label>
+  </div>
+
+<script>
+(function () {
+  'use strict';
+
+  var N = 4;                                  // 位数
+  var T = 300;                                // 一次翻牌总时长（ms）
+  var mode = 'free';                          // free = 每位独立排程；sync = 全部同时
+  var value = 0;
+  var digits = [0, 0, 0, 0];                  // 每位当前显示的数字（逻辑值，翻牌一开始就更新）
+  var queues = [[], [], [], []];               // 每位还要滚过去的数字
+  var nextAt = [0, 0, 0, 0];                  // 每位下一次可翻的时间戳
+  var commits = [];                            // 到点要把下半静牌换成新值的记录
+  var beat = 0, beatMax = 0, beatAt = 0;   // 同时模式：共享节拍
+  var raf = null;
+
+  var board = document.getElementById('board');
+  var statEl = document.getElementById('stat');
+  var reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  /* ---------------- 建 DOM：每位四层 ---------------- */
+  var cells = [];
+  function mk(cls) {
+    var h = document.createElement('div');
+    h.className = 'half ' + cls;
+    var n = document.createElement('div');
+    n.className = 'num';
+    n.textContent = '0';
+    h.appendChild(n);
+    return h;
+  }
+  for (var i = 0; i < N; i++) {
+    var d = document.createElement('div');
+    d.className = 'digit';
+    var st = mk('t'), sb = mk('b'), ft = mk('t flap'), fb = mk('b flap');
+    d.appendChild(st); d.appendChild(sb); d.appendChild(ft); d.appendChild(fb);
+    board.appendChild(d);
+    cells.push({ st: st.firstChild, sb: sb.firstChild, ft: ft.firstChild, fb: fb.firstChild, ftBox: ft, fbBox: fb });
+  }
+
+  function digitsOf(v) {
+    var s = String(Math.max(0, Math.min(9999, v)));
+    while (s.length < N) s = '0' + s;
+    return s.split('').map(Number);
+  }
+  function face(el, v) { el.textContent = v; }
+
+  /* 从 from 滚到 to，方向 dir（+1 / -1），最多 10 步。
+     返回途经的每一个数字，一位要滚几趟在这里定 —— 低位滚得多就是它决定的。 */
+  function roll(from, to, dir) {
+    var out = [], v = from, guard = 0;
+    while (v !== to && guard < 10) {
+      v = (v + dir + 10) % 10;
+      out.push(v);
+      guard++;
+    }
+    return out;
+  }
+
+  /* ---------------- 一次翻牌 ---------------- */
+  function flip(idx, to, now) {
+    var c = cells[idx];
+    var from = digits[idx];
+    /* 上静牌立刻换成新值：它被叶片盖着，翻到一半时才露出来。
+       下静牌必须留着旧值，等新叶片落下来盖住它之后再换。 */
+    face(c.st, to);
+    face(c.ft, from);
+    face(c.fb, to);
+    /* 同一帧 remove/add 同一个类，动画不会重放。读一次 offsetWidth 强制重算，
+       每一下翻牌只读一次，不是每帧读。 */
+    c.ftBox.classList.remove('go');
+    c.fbBox.classList.remove('go');
+    void c.ftBox.offsetWidth;
+    c.ftBox.classList.add('go');
+    c.fbBox.classList.add('go');
+    digits[idx] = to;
+    /* 每位只留一条待提交记录：连续翻时旧的必须作废，
+       否则同一格有两条待办，后处理的那条会把静牌写回旧数字 */
+    for (var p = commits.length - 1; p >= 0; p--) {
+      if (commits[p].el === c.sb) commits.splice(p, 1);
+    }
+    commits.push({ at: now + T, el: c.sb, v: to });
+  }
+
+  /* ---------------- 排程 ---------------- */
+  function start(target) {
+    target = Math.max(0, Math.min(9999, Math.round(target)));
+    if (target === value && queues.every(function (q) { return !q.length; })) return;
+    var dir = target >= value ? 1 : -1;
+    var to = digitsOf(target);
+    var counts = [];
+    for (var i = 0; i < N; i++) {
+      queues[i] = roll(digits[i], to[i], dir);
+      counts.push(queues[i].length);
+    }
+    value = target;
+    board.setAttribute('aria-label', '计数器 ' + String(target));
+    beatMax = Math.max.apply(null, counts);
+    statEl.innerHTML = '每位翻牌：<b>' + counts.join(' / ') + '</b>' +
+      (mode === 'sync' ? '（同时模式补齐后共 ' + beatMax + ' 拍）' : '');
+
+    if (reduced) {
+      /* 降级：不翻滚，直接换数字。也不留队列 */
+      for (var r = 0; r < N; r++) {
+        face(cells[r].st, to[r]); face(cells[r].sb, to[r]);
+        face(cells[r].ft, to[r]); face(cells[r].fb, to[r]);
+        digits[r] = to[r];
+      }
+      queues = [[], [], [], []];
+      return;
+    }
+
+    if (mode === 'sync') {
+      beat = 0;
+      beatAt = 0;
+    } else {
+      nextAt = [0, 0, 0, 0];
+    }
+    kick();
+  }
+
+  function tick(t) {
+    var busy = false;
+
+    if (mode === 'free') {
+      /* 每位一份队列、一个 nextAt：低位还在滚的时候，高位早就停住了 */
+      for (var i = 0; i < N; i++) {
+        if (queues[i].length && t >= nextAt[i]) {
+          flip(i, queues[i].shift(), t);
+          nextAt[i] = t + T;
+          busy = true;
+        }
+      }
+    } else {
+      /* 全部同时：共享一个节拍。队列短的位在这拍翻到"自己当前的值"，
+         也就是翻一张内容相同的牌，看着就是白翻一下。 */
+      if (t >= beatAt && beat < beatMax) {
+        for (var k = 0; k < N; k++) {
+          var q = queues[k][beat];
+          flip(k, q === undefined ? digits[k] : q, t);
+        }
+        beat++;
+        beatAt = t + T;
+        busy = true;
+      }
+    }
+
+    /* 到点提交下半静牌，省掉 setTimeout：所有定时都走这一个 rAF */
+    for (var c = commits.length - 1; c >= 0; c--) {
+      if (t >= commits[c].at) { face(commits[c].el, commits[c].v); commits.splice(c, 1); }
+    }
+    if (commits.length) busy = true;
+
+    /* 队列空了就停帧，空闲时不占 CPU */
+    if (busy) raf = requestAnimationFrame(tick);
+    else raf = null;
+  }
+  function kick() { if (!raf) raf = requestAnimationFrame(tick); }
+
+  /* ---------------- 控制面板 ---------------- */
+  var input = document.getElementById('iTarget');
+  document.getElementById('bGo').addEventListener('click', function () {
+    start(parseFloat(input.value || '0'));
+  });
+  input.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') start(parseFloat(input.value || '0'));
+  });
+  document.getElementById('bUp').addEventListener('click', function () { bump(clampV(value + 1)); });
+  document.getElementById('bDown').addEventListener('click', function () { bump(clampV(value - 1)); });
+  document.getElementById('bRand').addEventListener('click', function () {
+    bump(Math.floor(Math.random() * 10000));
+  });
+  document.getElementById('bRoll').addEventListener('click', function () {
+    /* 已经是 9999 时，start 的判等会吞掉这次请求；先把牌面归零再滚 */
+    if (value === 9999) {
+      digits = digitsOf(0);
+      value = 0;
+      cells.forEach(function (c, i) {
+        face(c.st, digits[i]); face(c.sb, digits[i]);
+        face(c.ft, digits[i]); face(c.fb, digits[i]);
+      });
+    }
+    bump(9999);
+  });
+  function clampV(v) { return Math.max(0, Math.min(9999, v)); }
+  function bump(v) { input.value = v; start(v); }
+
+  document.getElementById('cSync').addEventListener('change', function () {
+    mode = this.checked ? 'sync' : 'free';
+    /* 中途换模式：丢掉没翻完的排程，并把下半静牌立刻对齐到当前值，
+       否则被丢弃的 commit 会让静牌停在旧数字上 */
+    queues = [[], [], [], []];
+    commits.length = 0;
+    cells.forEach(function (c, i) { face(c.sb, digits[i]); });
+  });
+  var sT = document.getElementById('sT'), oT = document.getElementById('oT');
+  sT.addEventListener('input', function () {
+    T = parseInt(sT.value, 10);
+    document.documentElement.style.setProperty('--half', (T / 2) + 'ms');
+    oT.textContent = T + 'ms';
+  });
+
+  /* 首屏先露一下 0000，再自己滚到 427，进页面就能看到叶片在翻 */
+  requestAnimationFrame(function () {
+    requestAnimationFrame(function () { bump(427); });
+  });
+})();
+</script>
+</body>
+</html>

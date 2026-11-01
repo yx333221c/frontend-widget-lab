@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>形变开关（日 / 夜） · Widget Lab</title>
+<style>
+  /* ============ 画布 ============ */
+  :root {
+    --bg: #0e1119;
+    --ink: #e9edf6;
+    --accent: #f7b955;
+    --night: #16223d;      /* 夜空拇指经过的那一带必须是纯色，遮罩圆才能无缝接上 */
+    --dur: 300ms;          /* 动效时长：控制面板改它 */
+    --st: 1;               /* 错峰系数，0 = 关掉编排 */
+  }
+  * { box-sizing: border-box; }
+  html { overflow: hidden; }   /* iframe 内不留内部滚动条 */
+  body {
+    margin: 0; padding: 22px 20px;
+    background:
+      radial-gradient(120% 90% at 12% -10%, #26203a 0%, transparent 60%),
+      radial-gradient(100% 80% at 100% 110%, #1d2a3f 0%, transparent 55%),
+      var(--bg);
+    color: var(--ink);
+    font: 14px/1.6 system-ui, "PingFang SC", "Microsoft YaHei", sans-serif;
+  }
+  h2 { margin: 0 0 2px; font-size: 15px; letter-spacing: -.2px; }
+  p.note { margin: 0 0 6px; color: #8695b4; font-size: 12.5px; }
+
+  /* ============ 演示区 ============ */
+  .stage { display: flex; align-items: center; gap: 14px; height: 66px; }
+  .read { font-size: 12.5px; color: #a9b6d1; }
+  .read b { color: var(--ink); font-weight: 650; }
+
+  /* 开关本体：一个真 button，role=switch，靠 aria-checked 表达状态。
+     尺寸全部用 em，外层只改 font-size 就能整体缩放，内部比例不会走形。 */
+  .sw {
+    position: relative; flex: none;
+    font-size: calc(44px * var(--scale, 1));
+    width: 2.2em; height: 1em;
+    padding: 0; border: 1px solid rgba(255, 255, 255, .16); border-radius: 999px;
+    background: linear-gradient(180deg, #fff2d6, #ffd9a8);   /* 白天 */
+    cursor: pointer; overflow: hidden;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .sw:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+
+  /* 夜空是一层独立的纯色板，靠 opacity 交叠换色：
+     两个 linear-gradient 之间是不能插值的，只能交叉淡入。 */
+  .sky {
+    position: absolute; inset: 0; border-radius: inherit;
+    background: var(--night);
+    opacity: 0; transition: opacity var(--dur) linear;
+  }
+  .sky::before {
+    /* 光晕只铺左半边：月亮停在右侧，遮罩圆要和它身后的底色完全同色才看不出接缝 */
+    content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 62%;
+    background: radial-gradient(110% 100% at 26% 0%, rgba(90, 130, 220, .5), transparent 72%);
+  }
+  .sw[aria-checked="true"] .sky { opacity: 1; }
+
+  /* 星星：位移 + 透明度，入场按 --i 错峰 */
+  .star {
+    position: absolute; width: .1em; height: .1em; border-radius: 50%;
+    background: #fff;
+    opacity: 0;
+    transform: translate3d(0, .16em, 0) scale(.55);
+    transition: opacity calc(var(--dur) * .8) linear,
+                transform calc(var(--dur) * .8) cubic-bezier(.2, .8, .25, 1);
+  }
+  .star.big { width: .14em; height: .14em; }
+  .sw[aria-checked="true"] .star {
+    opacity: .92; transform: none;
+    /* 分向不对称的关键：延迟只写在"开"这一侧，关的时候基类生效，星星立刻消失 */
+    transition-delay: calc(var(--st) * var(--i, 0) * var(--dur) * .1);
+  }
+
+  /* 太阳 / 月亮：box-shadow 的光晕不能被 clip-path 裁掉，所以用叠加遮罩圆 */
+  .knob {
+    position: absolute; top: 50%; left: .08em; margin-top: -.42em;
+    width: .84em; height: .84em; border-radius: 50%; overflow: hidden;
+    background: radial-gradient(circle at 34% 30%, #fff6d2, #ffc94d 60%, #f0942a);
+    box-shadow: 0 0 .2em rgba(255, 201, 77, .6), inset 0 0 .1em rgba(255, 255, 255, .55);
+    transition: transform var(--dur) cubic-bezier(.2, .8, .25, 1),
+                box-shadow var(--dur) linear;
+  }
+  .knob::after {
+    content: ""; position: absolute; top: .05em; left: .34em;
+    width: .66em; height: .66em; border-radius: 50%;
+    background: var(--night);
+    transform: translate3d(.78em, 0, 0);     /* 白天：整体被 overflow:hidden 裁光 */
+    transition: transform var(--dur) cubic-bezier(.4, 0, .2, 1);
+  }
+  .sw[aria-checked="true"] .knob {
+    transform: translate3d(1.2em, 0, 0);
+    box-shadow: 0 0 .14em rgba(160, 190, 255, .28), inset 0 0 .1em rgba(255, 255, 255, .1);
+    transition-delay: calc(var(--st) * var(--dur) * .5);   /* 月亮后进：星星已经全部起步 */
+  }
+  .sw[aria-checked="true"] .knob::after {
+    transform: translate3d(0, 0, 0);
+    transition-delay: calc(var(--st) * var(--dur) * .5);
+  }
+
+  /* ============ 控制面板 ============ */
+  .panel {
+    display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center;
+    padding: 7px 12px; border-radius: 12px;
+    background: rgba(255, 255, 255, .04); border: 1px solid rgba(255, 255, 255, .1);
+    font-size: 12.5px; color: #a9b6d1;
+  }
+  .panel > span, .panel > label {
+    display: inline-flex; align-items: center; gap: 7px; white-space: nowrap;
+  }
+  .panel .chk { cursor: pointer; }
+  .panel input[type="checkbox"] { accent-color: var(--accent); }
+  .panel input[type="range"] { width: 88px; accent-color: var(--accent); }
+  .panel output { font-variant-numeric: tabular-nums; color: var(--ink); min-width: 34px; }
+  .seg { display: inline-flex; gap: 2px; padding: 2px; border-radius: 9px; background: rgba(255, 255, 255, .05); }
+  .seg input { position: absolute; width: 1px; height: 1px; opacity: 0; margin: 0; }
+  .seg label {
+    padding: 2px 9px; border-radius: 7px; cursor: pointer;
+    font: 600 12px/1.5 system-ui; color: #93a1bd;
+    transition: background .2s, color .2s;
+  }
+  .seg label:hover { color: var(--ink); }
+  .seg input:checked + label { background: var(--accent); color: #2a1d05; }
+  .seg input:focus-visible + label { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .sky, .star, .knob, .knob::after, .seg label { transition-duration: 1ms; transition-delay: 0ms; }
+  }
+</style>
+</head>
+<body>
+  <h2>形变开关（日 / 夜） Toggle Morph</h2>
+  <p class="note">点一下或聚焦后按空格。轨道换色、星星错峰淡入、太阳被遮成月牙，三件事排在不同时刻。</p>
+
+  <div class="stage">
+    <button class="sw" id="sw" type="button" role="switch" aria-checked="false" aria-label="夜间模式">
+      <span class="sky" aria-hidden="true">
+        <span class="star big" style="left:22%; top:26%; --i:0"></span>
+        <span class="star" style="left:36%; top:62%; --i:1"></span>
+        <span class="star" style="left:49%; top:34%; --i:2"></span>
+        <span class="star big" style="left:63%; top:70%; --i:3"></span>
+        <span class="star" style="left:74%; top:24%; --i:4"></span>
+      </span>
+      <span class="knob" aria-hidden="true"></span>
+    </button>
+    <span class="read">aria-checked = <b id="rd">false</b> · <b id="rd2">白天</b></span>
+  </div>
+
+  <div class="panel">
+    <span>尺寸
+      <input type="range" id="sScale" min="0.8" max="1.4" step="0.1" value="1" aria-label="开关尺寸倍数">
+      <output id="oScale">1.0×</output>
+    </span>
+    <span>时长</span>
+    <span class="seg">
+      <input type="radio" name="dur" id="d150" value="150" aria-label="动效时长 150 毫秒"><label for="d150">150ms</label>
+      <input type="radio" name="dur" id="d300" value="300" checked aria-label="动效时长 300 毫秒"><label for="d300">300ms</label>
+      <input type="radio" name="dur" id="d600" value="600" aria-label="动效时长 600 毫秒"><label for="d600">600ms</label>
+    </span>
+    <label class="chk"><input type="checkbox" id="cSt"> 禁用错峰</label>
+  </div>
+
+<script>
+(function () {
+  'use strict';
+
+  var sw = document.getElementById('sw');
+  var rd = document.getElementById('rd'), rd2 = document.getElementById('rd2');
+  var root = document.documentElement;
+
+  /* 读屏器要能在状态变化后拿到新语义，所以文本更新和属性写入合并到一帧里做。
+     画完就把句柄交出去，空闲时没有待处理的帧。 */
+  var raf = null;
+  function schedule() {
+    if (raf) return;
+    raf = requestAnimationFrame(function () { raf = null; sync(); });
+  }
+  function sync() {
+    var on = sw.getAttribute('aria-checked') === 'true';
+    rd.textContent = String(on);
+    rd2.textContent = on ? '夜间' : '白天';
+  }
+
+  sw.addEventListener('click', function () {
+    var on = sw.getAttribute('aria-checked') === 'true';
+    sw.setAttribute('aria-checked', String(!on));   // 状态由 aria-checked 单向决定，CSS 只认它
+    schedule();
+  });
+  /* Space 与 Enter 是 button 自带的，不用 addEventListener('keydown') 补；
+     换成 div 就得自己写，而且只写 Space 会漏掉 Enter。 */
+
+  /* ---------------- 控制面板 ---------------- */
+  var sScale = document.getElementById('sScale'), oScale = document.getElementById('oScale');
+  sScale.addEventListener('input', function () {
+    sw.style.setProperty('--scale', sScale.value);
+    oScale.textContent = parseFloat(sScale.value).toFixed(1) + '×';
+  });
+
+  ['d150', 'd300', 'd600'].forEach(function (id) {
+    document.getElementById(id).addEventListener('change', function () {
+      root.style.setProperty('--dur', this.value + 'ms');
+    });
+  });
+
+  document.getElementById('cSt').addEventListener('change', function () {
+    root.style.setProperty('--st', this.checked ? '0' : '1');
+  });
+
+  if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+    sw.setAttribute('aria-checked', 'true');        // 首屏跟随系统，不做多余的入场动画
+  }
+  sync();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>新拟态按键面板 · Widget Lab</title>
+<style>
+  /* ============================================================
+     新拟态 = 同色底 + 一深一浅双向阴影。
+     浅阴影要比底更亮、深阴影要比底更暗，所以底色明度必须留在
+     中间地带：纯白没有"更亮"的余量，纯黑没有"更暗"的余量。
+     --ox / --oy 是光源角度换算出的阴影偏移，一个变量管全板。
+     ============================================================ */
+  :root {
+    --bg: #0e1119;
+    --muted: #8695b4;
+    --accent: #9aa6c0;
+    /* 这 6 个变量由 JS 按 色相 / 明度 / 角度 算出后写入 */
+    --surface: hsl(220, 27%, 91%);
+    --hi: hsl(220, 27%, 99%);
+    --lo: hsl(220, 33%, 78%);
+    --ink: hsl(220, 35%, 24%);
+    --edge: hsl(220, 22%, 60%);
+    --ox: 4.95px;
+    --oy: 4.95px;
+    --blur: 12.6px;          /* 模糊半径 = 1.8 × 键高 7px 的投射单位 */
+    --blur-d: 14px;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 22px 20px;
+    background:
+      radial-gradient(120% 90% at 8% -12%, #191f36 0%, transparent 58%),
+      var(--bg);
+    color: #e9edf6;
+    font: 14px/1.6 system-ui, "PingFang SC", "Microsoft YaHei", sans-serif;
+  }
+  h2 { margin: 0 0 4px; font-size: 15px; letter-spacing: -.2px; }
+  p.note { margin: 0 0 12px; color: var(--muted); font-size: 12.5px; }
+
+  .wrap { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-start; }
+
+  /* ============ 软胶面板（局部底色由 --surface 控制） ============ */
+  .pad {
+    --d: 9px;
+    flex: none;
+    width: 246px; padding: 10px;
+    border-radius: 22px;
+    border: 1px solid transparent;
+    background: var(--surface);
+    color: var(--ink);
+    box-shadow:
+      calc(var(--ox) * 1.6) calc(var(--oy) * 1.6) var(--blur-d) var(--lo),
+      calc(var(--ox) * -1.6) calc(var(--oy) * -1.6) var(--blur-d) var(--hi);
+    transition: background .2s, box-shadow .2s, border-color .2s;
+  }
+  /* 显示区天生是"凹"的：inset 版双向阴影 */
+  .disp {
+    --d: 7px;
+    height: 38px; margin-bottom: 8px; padding: 5px 11px;
+    border-radius: 13px;
+    display: flex; flex-direction: column; justify-content: center; align-items: flex-end;
+    background: var(--surface);
+    border: 1px solid transparent;
+    box-shadow:
+      inset calc(var(--ox) * .7) calc(var(--oy) * .7) calc(var(--d) * 1.2) var(--lo),
+      inset calc(var(--ox) * -.7) calc(var(--oy) * -.7) calc(var(--d) * 1.2) var(--hi);
+    transition: box-shadow .2s, border-color .2s;
+  }
+  .disp b { font: 600 17px/1.1 ui-monospace, Consolas, monospace; letter-spacing: .5px; }
+  .disp i { font-style: normal; font-size: 10px; opacity: .6; min-height: 12px;
+            font-family: ui-monospace, Consolas, monospace; }
+
+  .keys { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+  .key {
+    --d: 7px;
+    position: relative;
+    height: 32px; padding: 0; cursor: pointer;
+    border: 1px solid transparent; border-radius: 12px;
+    background: var(--surface); color: var(--ink);
+    font: 650 13px/1 system-ui, "PingFang SC", sans-serif;
+    -webkit-tap-highlight-color: transparent;
+    /* 凸起：一深一浅，尺寸相同、方向相反 */
+    box-shadow:
+      var(--ox) var(--oy) var(--blur) var(--lo),
+      calc(var(--ox) * -1) calc(var(--oy) * -1) var(--blur) var(--hi);
+    transition: box-shadow .16s ease, background .2s, color .2s, border-color .2s;
+  }
+  /* 按下：外阴影原地换成 inset —— 这是"按下去"的全部机制 */
+  .key:active {
+    box-shadow:
+      inset var(--ox) var(--oy) var(--blur) var(--lo),
+      inset calc(var(--ox) * -1) calc(var(--oy) * -1) var(--blur) var(--hi);
+  }
+  .key:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+
+  /* 运算符键走"双伪元素交叉淡入"，绕开 inset / 非 inset 之间 box-shadow 不补间的问题 */
+  .key.fx { position: relative; box-shadow: none; }
+  .key.fx > span { position: relative; z-index: 1; }
+  .key.fx::before, .key.fx::after {
+    content: ""; position: absolute; inset: 0; border-radius: inherit;
+    pointer-events: none; transition: opacity .18s ease;
+  }
+  .key.fx::before {
+    opacity: var(--up, 1);
+    box-shadow:
+      var(--ox) var(--oy) var(--blur) var(--lo),
+      calc(var(--ox) * -1) calc(var(--oy) * -1) var(--blur) var(--hi);
+  }
+  .key.fx::after {
+    opacity: var(--down, 0);
+    box-shadow:
+      inset var(--ox) var(--oy) calc(var(--d) * 1.2) var(--lo),
+      inset calc(var(--ox) * -1) calc(var(--oy) * -1) calc(var(--d) * 1.2) var(--hi);
+  }
+  .key.fx:active { --up: 0; --down: 1; }
+
+  .key.op { font-weight: 750; }
+  .key.eq { color: var(--ink); background:
+      linear-gradient(150deg, rgba(124, 92, 255, .5), rgba(124, 92, 255, 0) 72%), var(--surface); }
+
+  /* 数字键 vs 伪元素键：同一个 :active，两套过渡实现 */
+  body.xfade .key:not(.fx) { box-shadow: none; }
+  body.xfade .key:not(.fx):active { --up: 0; --down: 1; }
+  body.xfade .key:not(.fx) > span { position: relative; z-index: 1; }
+  body.xfade .key:not(.fx)::before, body.xfade .key:not(.fx)::after {
+    content: ""; position: absolute; inset: 0; border-radius: inherit;
+    pointer-events: none; transition: opacity .18s ease;
+  }
+  body.xfade .key:not(.fx)::before {
+    opacity: var(--up, 1);
+    box-shadow:
+      var(--ox) var(--oy) var(--blur) var(--lo),
+      calc(var(--ox) * -1) calc(var(--oy) * -1) var(--blur) var(--hi);
+  }
+  body.xfade .key:not(.fx)::after {
+    opacity: var(--down, 0);
+    box-shadow:
+      inset var(--ox) var(--oy) calc(var(--d) * 1.2) var(--lo),
+      inset calc(var(--ox) * -1) calc(var(--oy) * -1) calc(var(--d) * 1.2) var(--hi);
+  }
+
+  /* 关掉双向阴影：只剩一块同色平板，对比出阴影的全部贡献 */
+  body.flat .key, body.flat .pad, body.flat .disp {
+    box-shadow: none !important;
+    border-color: var(--edge);
+  }
+  body.flat .key.fx::before, body.flat .key.fx::after,
+  body.flat .key:not(.fx)::before, body.flat .key:not(.fx)::after { opacity: 0; }
+
+  /* 无障碍模式：真实 1px 边框 + 拉高文字对比，凸起保留 */
+  body.a11y .pad, body.a11y .disp, body.a11y .key { border-color: var(--edge); }
+  body.a11y .key { font-weight: 800; }
+
+  /* ============ 控制区（页面外框仍是深色基调） ============ */
+  .side { flex: 1 1 260px; min-width: 240px; }
+  .panel {
+    padding: 8px 11px; border-radius: 12px;
+    background: rgba(255, 255, 255, .04); border: 1px solid rgba(255, 255, 255, .1);
+    font-size: 12px; color: #a9b6d1;
+  }
+  .row { display: flex; align-items: center; gap: 8px; }
+  .row + .row { margin-top: 6px; }
+  .row > .lb { min-width: 58px; white-space: nowrap; font-size: 11.5px; color: var(--muted); }
+  .row input[type="range"] { flex: 1; min-width: 80px; accent-color: var(--accent); }
+  .row output { font-variant-numeric: tabular-nums; color: #e9edf6; min-width: 42px;
+                text-align: right; font-size: 11.5px; }
+  .sw { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 8px;
+        padding-top: 8px; border-top: 1px dashed rgba(255, 255, 255, .1); }
+  .sw label { display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 11.5px; color: #cdd6ec; }
+  .sw input { accent-color: var(--accent); }
+  .hint { margin: 8px 0 0; font-size: 11px; color: #6c7893; line-height: 1.5; }
+  .hint b { color: #a9b6d1; font-weight: 600; }
+  code { font: 11px ui-monospace, Consolas, monospace; color: #b8c6e6; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .key, .pad, .disp, .key.fx::before, .key.fx::after { transition-duration: .01s; }
+  }
+</style>
+</head>
+<body>
+  <h2>新拟态按键面板 Neumorphic Keys</h2>
+  <p class="note">先按几下键盘；再把明度推到 <code>99%</code> 或拉到 <code>8%</code>，双向阴影会同时失效。</p>
+
+  <div class="wrap">
+    <div class="pad">
+      <div class="disp" aria-live="polite">
+        <b id="cur">0</b><i id="acc"></i>
+      </div>
+      <div class="keys" id="keys">
+        <button class="key" data-k="7"><span>7</span></button>
+        <button class="key" data-k="8"><span>8</span></button>
+        <button class="key" data-k="9"><span>9</span></button>
+        <button class="key op fx" data-k="/"><span>÷</span></button>
+        <button class="key" data-k="4"><span>4</span></button>
+        <button class="key" data-k="5"><span>5</span></button>
+        <button class="key" data-k="6"><span>6</span></button>
+        <button class="key op fx" data-k="*"><span>×</span></button>
+        <button class="key" data-k="1"><span>1</span></button>
+        <button class="key" data-k="2"><span>2</span></button>
+        <button class="key" data-k="3"><span>3</span></button>
+        <button class="key op fx" data-k="-"><span>−</span></button>
+        <button class="key" data-k="0"><span>0</span></button>
+        <button class="key" data-k="."><span>.</span></button>
+        <button class="key eq" data-k="="><span>=</span></button>
+        <button class="key op fx" data-k="+"><span>+</span></button>
+      </div>
+    </div>
+
+    <div class="side">
+      <div class="panel">
+        <div class="row"><span class="lb">底色色相</span>
+          <input type="range" id="sHue" min="0" max="360" step="1" value="220" aria-label="底色色相">
+          <output id="oHue">220°</output>
+        </div>
+        <div class="row"><span class="lb">底色明度</span>
+          <input type="range" id="sLight" min="8" max="99" step="1" value="91" aria-label="底色明度">
+          <output id="oLight">91%</output>
+        </div>
+        <div class="row"><span class="lb">光源角度</span>
+          <input type="range" id="sAngle" min="0" max="360" step="5" value="225" aria-label="光源角度">
+          <output id="oAngle">225°</output>
+        </div>
+        <div class="sw">
+          <label><input type="checkbox" id="cA11y"> 无障碍模式（1px 实边框 + 加粗）</label>
+          <label><input type="checkbox" id="cFlat"> 关掉双向阴影</label>
+          <label><input type="checkbox" id="cX"> 数字键也改用伪元素交叉淡入</label>
+        </div>
+      </div>
+      <p class="hint">
+        明度 <b>91%</b> 附近的取值原理：浅侧要还能再亮 <b>8</b> 个点、深侧要还能再暗 <b>13</b> 个点，两端都留有余量才看得出凸起。<br>
+        <b>光源角度 225°</b> 指光从左上来：暗投影偏移取 <code>-cos / -sin</code>，所以落在右下；浅阴影符号相反，贴在左上。<br>
+        深底测试：明度拉到 <b>20%</b> 接近 <code>#1a2032</code>，此时 <code>--ink</code> 翻成浅色，面板仍然成立。
+      </p>
+    </div>
+  </div>
+
+<script>
+(function () {
+  'use strict';
+
+  var root = document.documentElement;
+  var SAT = 27;        // 底色饱和度固定为灰调：新拟态靠的是同色，不是撞色
+  var HI_STEP = 8;     // 浅阴影比底色亮的幅度
+  var LO_STEP = 13;    // 深阴影比底色暗的幅度（暗侧要走更远才压得住）
+  var PROJ = 7;        // 投射单位（px）：键高度的约 1/4
+  var state = { hue: 220, light: 91, angle: 225 };
+
+  function clamp(v, a, b) { return v < a ? a : v > b ? b : v; }
+  function hsl(h, s, l) { return 'hsl(' + h + ',' + s + '%,' + l + '%)'; }
+
+  var queued = false;
+  /* 滑块一帧能触发几十次 input：合并到下一帧写一次，
+     box-shadow 与 background 每改一次都要重新栅格化整个面板 */
+  function paintQueued() {
+    if (queued) return;
+    queued = true;
+    requestAnimationFrame(function () { queued = false; paint(); });
+  }
+
+  /* 阴影色 = 底色明度 ± X%。两端都被 clamp 到极值，就是"凸起消失"的时刻 */
+  function paint() {
+    var h = state.hue, l = state.light;
+    root.style.setProperty('--surface', hsl(h, SAT, l));
+    root.style.setProperty('--hi', hsl(h, SAT, clamp(l + HI_STEP, 0, 99)));
+    root.style.setProperty('--lo', hsl(h, SAT + 6, clamp(l - LO_STEP, 2, 99)));
+    var dark = l > 58;
+    root.style.setProperty('--ink',
+      dark ? hsl(h, SAT + 8, clamp(l - 62, 8, 40)) : hsl(h, 30, clamp(l + 62, 78, 97)));
+    root.style.setProperty('--edge',
+      dark ? hsl(h, 20, clamp(l - 34, 30, 62)) : hsl(h, 20, clamp(l + 34, 60, 88)));
+
+    /* 光源角度 → 阴影偏移。a 是"光源所在方位"（0° 右、90° 下、225° 左上），
+       暗投影落在背光一侧，所以取 -cos / -sin；浅阴影迎光，符号相反 */
+    var a = state.angle * Math.PI / 180;
+    root.style.setProperty('--ox', (-Math.cos(a) * PROJ).toFixed(2) + 'px');
+    root.style.setProperty('--oy', (-Math.sin(a) * PROJ).toFixed(2) + 'px');
+    /* 模糊半径与投射距离绑定：太小则阴影像描边，太大则发灰 */
+    root.style.setProperty('--blur', (PROJ * 1.8).toFixed(1) + 'px');
+    root.style.setProperty('--blur-d', (PROJ * 1.8 * 1.6).toFixed(0) + 'px');
+  }
+
+  function bind(id, outId, key, fmt) {
+    var inp = document.getElementById(id), out = document.getElementById(outId);
+    inp.addEventListener('input', function () {
+      state[key] = parseFloat(inp.value);
+      out.textContent = fmt(state[key]);
+      paintQueued();
+    });
+  }
+  bind('sHue', 'oHue', 'hue', function (v) { return v + '°'; });
+  bind('sLight', 'oLight', 'light', function (v) { return v + '%'; });
+  bind('sAngle', 'oAngle', 'angle', function (v) { return v + '°'; });
+
+  document.getElementById('cA11y').addEventListener('change', function () {
+    document.body.classList.toggle('a11y', this.checked);
+  });
+  document.getElementById('cFlat').addEventListener('change', function () {
+    document.body.classList.toggle('flat', this.checked);
+  });
+  document.getElementById('cX').addEventListener('change', function () {
+    document.body.classList.toggle('xfade', this.checked);
+  });
+
+  /* ---------------- 计算器状态 ---------------- */
+  var cur = '0', acc = null, op = null, fresh = true;
+  var elCur = document.getElementById('cur'), elAcc = document.getElementById('acc');
+  var GLYPH = { '/': '÷', '*': '×', '-': '−', '+': '+' };
+
+  function num(s) { return parseFloat(s) || 0; }
+  function fmt(n) {
+    if (!isFinite(n)) return 'ERROR';
+    var s = String(Math.round(n * 1e6) / 1e6);
+    return s.length > 11 ? n.toPrecision(8) : s;
+  }
+  function render() {
+    elCur.textContent = cur;
+    elAcc.textContent = acc === null ? '' : fmt(acc) + ' ' + (GLYPH[op] || '');
+  }
+  function calc(a, o, b) {
+    return o === '+' ? a + b : o === '-' ? a - b : o === '*' ? a * b : (b === 0 ? Infinity : a / b);
+  }
+  function press(k) {
+    if ((k >= '0' && k <= '9') || k === '.') {
+      if (fresh) { cur = k === '.' ? '0.' : k; fresh = false; }
+      else if (cur.length < 11) { cur = cur === '0' && k !== '.' ? k : cur + k; }
+    } else if (k === '=') {
+      if (op !== null && acc !== null) { cur = fmt(calc(acc, op, num(cur))); acc = null; op = null; fresh = true; }
+    } else {
+      if (op !== null && acc !== null && !fresh) acc = calc(acc, op, num(cur));
+      else if (acc === null) acc = num(cur);
+      op = k; fresh = true;
+    }
+    render();
+  }
+  document.getElementById('keys').addEventListener('click', function (e) {
+    var b = e.target.closest ? e.target.closest('.key') : null;
+    if (b) press(b.dataset.k);
+  });
+
+  render();
+  paint();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>双色滑块 + 数值气泡 · Widget Lab</title>
+<style>
+  /* ============ 画布 ============ */
+  :root {
+    --bg: #0e1119;
+    --ink: #e9edf6;
+    --accent: #24d3ee;
+    --track: rgba(255, 255, 255, .12);
+    --thumb: 20px;          /* 拇指直径：气泡定位和刻度排版都按它算 */
+    --bw: 34px;             /* 气泡半宽，边界 clamp 用它留边 */
+    --th: 6px;              /* 轨道厚度 */
+  }
+  * { box-sizing: border-box; }
+  html { overflow: hidden; }   /* iframe 里不留内部滚动条，超出直接裁 */
+  body {
+    margin: 0; padding: 22px 20px;
+    background:
+      radial-gradient(120% 90% at 12% -10%, #14263c 0%, transparent 60%),
+      radial-gradient(100% 80% at 100% 110%, #1a2b38 0%, transparent 55%),
+      var(--bg);
+    color: var(--ink);
+    font: 14px/1.6 system-ui, "PingFang SC", "Microsoft YaHei", sans-serif;
+  }
+  h2 { margin: 0 0 2px; font-size: 15px; letter-spacing: -.2px; }
+  p.note { margin: 0 0 10px; color: #8695b4; font-size: 12.5px; }
+
+  /* ============ 滑轨：一个 .slider 只管一条 ============ */
+  .slider { position: relative; height: 54px; }
+  .slider[hidden] { display: none; }
+
+  /* 原生 range 打底：appearance 清掉 UA 样式，键盘与拖拽逻辑一行都不用写 */
+  .rng {
+    position: absolute; left: 0; top: 28px; z-index: 2;
+    width: 100%; height: var(--thumb); margin: 0;
+    -webkit-appearance: none; appearance: none;
+    background: transparent; outline: none; cursor: ew-resize;
+  }
+  /* WebKit 没有 ::-*-range-progress，左侧填充只能自己写死标位置 */
+  .rng::-webkit-slider-runnable-track {
+    height: var(--th); border-radius: 999px;
+    background: linear-gradient(90deg, var(--accent) var(--p, 0%), var(--track) var(--p, 0%));
+  }
+  .rng::-webkit-slider-thumb {
+    -webkit-appearance: none; appearance: none;
+    width: var(--thumb); height: var(--thumb);
+    margin-top: -7px;                    /* (6 - 20) / 2：runnable-track 不会自动居中 */
+    border: 0; border-radius: 50%; background: #eaf6fb;
+    box-shadow: 0 1px 6px rgba(0, 0, 0, .5);
+    transition: transform .16s cubic-bezier(.2, .8, .25, 1);
+  }
+  .rng:active::-webkit-slider-thumb { transform: scale(1.18); }
+  /* Firefox：伪元素前缀完全不同，必须另写一份；progress 自带左侧填充 */
+  .rng::-moz-range-track { height: var(--th); border-radius: 999px; background: var(--track); }
+  .rng::-moz-range-progress { height: var(--th); border-radius: 999px; background: var(--accent); }
+  .rng::-moz-range-thumb {
+    appearance: none;
+    width: var(--thumb); height: var(--thumb);
+    border: 0; border-radius: 50%; background: #eaf6fb;
+    box-shadow: 0 1px 6px rgba(0, 0, 0, .5);
+  }
+  /* 焦点环必须画在拇指上：画在 input 上会绕整条轨道一圈，看不出焦点在哪个值 */
+  .rng:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 4px rgba(36, 211, 238, .45); }
+  .rng:focus-visible::-moz-range-thumb { box-shadow: 0 0 0 4px rgba(36, 211, 238, .45); }
+
+  /* ============ 双滑块 ============ */
+  .pair .band {
+    position: absolute; left: 0; right: 0; top: 35px; height: var(--th); z-index: 1;
+    border-radius: 999px;
+    background: linear-gradient(90deg,
+      var(--track) 0 var(--a, 0%), var(--accent) var(--a, 0%) var(--b, 0%), var(--track) var(--b, 0%) 100%);
+  }
+  /* 轨道涂色交给 .band，input 自己的填充要关掉 */
+  .pair .rng::-webkit-slider-runnable-track { background: var(--track); }
+  .pair .rng::-moz-range-progress { background: transparent; }
+  /* 关键：input 整条都吃指针，上面那条会把下面那条完全盖住。
+     只有拇指要回指针，轨道空出来，两个 input 叠着也能各自被抓。 */
+  .pair .rng { pointer-events: none; }
+  .pair .rng::-webkit-slider-thumb { pointer-events: auto; cursor: grab; }
+  .pair .rng::-moz-range-thumb { pointer-events: auto; cursor: grab; }
+
+  /* ============ 气泡 ============ */
+  .bubble {
+    position: absolute; top: 0; z-index: 3;
+    /* 拇指中心 = f*(W-拇指宽)+半个拇指；clamp 把气泡整个留在轨道内 */
+    left: clamp(var(--bw), calc(var(--f, 0) * (100% - var(--thumb)) + var(--thumb) / 2), calc(100% - var(--bw)));
+    transform: translateX(-50%);
+    min-width: 46px; padding: 3px 8px;
+    border-radius: 8px;
+    background: rgba(36, 211, 238, .14);
+    border: 1px solid rgba(36, 211, 238, .45);
+    color: #d7f5fd;
+    font: 650 12px/1.4 ui-monospace, "Cascadia Mono", Consolas, monospace;
+    text-align: center; white-space: nowrap;
+    opacity: .5;
+    transition: opacity .18s, transform .18s, background .18s;
+  }
+  .bubble::after {
+    content: ""; position: absolute; left: 50%; bottom: -4px;
+    width: 7px; height: 7px; margin-left: -3.5px;
+    background: inherit;
+    border-right: 1px solid rgba(36, 211, 238, .45);
+    border-bottom: 1px solid rgba(36, 211, 238, .45);
+    transform: rotate(45deg);
+  }
+  /* 只在聚焦或拖动时点亮：hover 也亮的话，鼠标经过就一堆气泡乱闪 */
+  .slider.drag .bubble, .slider:focus-within .bubble {
+    opacity: 1; transform: translateX(-50%) translateY(-2px);
+    background: rgba(36, 211, 238, .3);
+  }
+
+  /* ============ 刻度 ============ */
+  .ticks { position: absolute; left: 0; right: 0; top: 48px; height: 6px; display: none; }
+  .ticks span {
+    position: absolute; top: 0; width: 1px; height: 5px;
+    margin-left: -.5px; background: rgba(255, 255, 255, .22);
+  }
+  .ticks span.edge { height: 6px; background: rgba(255, 255, 255, .42); }
+
+  /* ============ 控制面板 ============ */
+  .panel {
+    display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center;
+    margin-top: 6px; padding: 7px 12px; border-radius: 12px;
+    background: rgba(255, 255, 255, .04); border: 1px solid rgba(255, 255, 255, .1);
+    font-size: 12.5px; color: #a9b6d1;
+  }
+  .panel > span, .panel > label, .panel > output {
+    display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;
+  }
+  .panel .chk { cursor: pointer; }
+  .panel input[type="checkbox"] { accent-color: var(--accent); }
+  .panel output {
+    margin-left: auto; padding: 2px 8px; border-radius: 7px;
+    background: rgba(36, 211, 238, .1); border: 1px solid rgba(36, 211, 238, .3);
+    color: #d7f5fd; font: 650 12px/1.4 ui-monospace, Consolas, monospace;
+  }
+  .seg { display: inline-flex; gap: 2px; padding: 2px; border-radius: 9px; background: rgba(255, 255, 255, .05); }
+  .seg input { position: absolute; width: 1px; height: 1px; opacity: 0; margin: 0; }
+  .seg label {
+    padding: 2px 9px; border-radius: 7px; cursor: pointer;
+    font: 600 12px/1.5 system-ui; color: #93a1bd;
+    transition: background .2s, color .2s;
+  }
+  .seg label:hover { color: var(--ink); }
+  .seg input:checked + label { background: var(--accent); color: #04222a; }
+  .seg input:focus-visible + label { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .bubble, .seg label { transition: none; }
+    .rng::-webkit-slider-thumb { transition: none; }
+    .rng:active::-webkit-slider-thumb { transform: none; }
+    .slider.drag .bubble, .slider:focus-within .bubble { transform: translateX(-50%); }
+  }
+</style>
+</head>
+<body>
+  <h2>双色滑块 + 数值气泡 Range Slider</h2>
+  <p class="note">拖拇指，或 Tab 聚焦后用 ← → / Home / End / PageUp 步进。</p>
+
+  <div class="slider" id="sSingle">
+    <input class="rng" id="rSingle" type="range" min="0" max="1000" step="10" value="320" aria-label="金额">
+    <div class="bubble" id="bSingle" aria-hidden="true">320</div>
+    <div class="ticks" id="tSingle" aria-hidden="true"></div>
+  </div>
+
+  <div class="slider pair" id="sPair" hidden>
+    <div class="band" aria-hidden="true"></div>
+    <input class="rng" id="rLo" type="range" min="0" max="1000" step="10" value="180" aria-label="价格下限">
+    <div class="bubble" id="bLo" aria-hidden="true">180</div>
+    <input class="rng" id="rHi" type="range" min="0" max="1000" step="10" value="760" aria-label="价格上限">
+    <div class="bubble" id="bHi" aria-hidden="true">760</div>
+    <div class="ticks" id="tPair" aria-hidden="true"></div>
+  </div>
+
+  <div class="panel">
+    <span>模式</span>
+    <span class="seg">
+      <input type="radio" name="mode" id="mSingle" checked aria-label="单滑块"><label for="mSingle">单</label>
+      <input type="radio" name="mode" id="mPair" aria-label="双滑块区间"><label for="mPair">双</label>
+    </span>
+    <span>步长</span>
+    <span class="seg">
+      <input type="radio" name="step" id="st1" value="1" aria-label="步长 1"><label for="st1">1</label>
+      <input type="radio" name="step" id="st10" value="10" checked aria-label="步长 10"><label for="st10">10</label>
+      <input type="radio" name="step" id="st50" value="50" aria-label="步长 50"><label for="st50">50</label>
+    </span>
+    <label class="chk"><input type="checkbox" id="cTicks"> 显示刻度</label>
+    <label class="chk"><input type="checkbox" id="cYuan"> ¥ 前缀</label>
+    <output id="oRead" for="rSingle" aria-hidden="true">320</output>
+  </div>
+
+<script>
+(function () {
+  'use strict';
+
+  var MIN = 0, MAX = 1000, STEP = 10, yuan = false;
+
+  var rSingle = document.getElementById('rSingle');
+  var rLo = document.getElementById('rLo'), rHi = document.getElementById('rHi');
+  var sSingle = document.getElementById('sSingle'), sPair = document.getElementById('sPair');
+  var bSingle = document.getElementById('bSingle');
+  var bLo = document.getElementById('bLo'), bHi = document.getElementById('bHi');
+  var band = sPair.querySelector('.band');
+  var oRead = document.getElementById('oRead');
+  var all = [rSingle, rLo, rHi];
+
+  function fmt(v) { return yuan ? '¥' + v : String(v); }
+  function frac(v) { return (v - MIN) / (MAX - MIN); }     // 0 ~ 1
+
+  /* 一帧只画一次：拖动时 input 事件比刷新率密得多 */
+  var raf = null;
+  function schedule() {
+    if (raf) return;
+    raf = requestAnimationFrame(function () { raf = null; paint(); });
+  }
+
+  function pos(el, bubble) {
+    var f = frac(+el.value);
+    el.style.setProperty('--p', (f * 100) + '%');   // runnable-track 渐变的硬标
+    bubble.style.setProperty('--f', f);             // 无单位比例，留给 calc 去乘
+    bubble.textContent = fmt(el.value);
+    /* aria-valuetext 决定读屏器念什么：光报 320 听不出单位 */
+    el.setAttribute('aria-valuetext', fmt(el.value));
+    return f;
+  }
+
+  function paint() {
+    if (!sPair.hidden) {
+      /* 区间不许交叉：谁动谁让开一个 step，比 clamp 到相等好，拇指不会黏死 */
+      if (+rLo.value > +rHi.value - STEP) rLo.value = Math.max(MIN, +rHi.value - STEP);
+      if (+rHi.value < +rLo.value + STEP) rHi.value = Math.min(MAX, +rLo.value + STEP);
+      var a = pos(rLo, bLo), b = pos(rHi, bHi);
+      band.style.setProperty('--a', (a * 100) + '%');
+      band.style.setProperty('--b', (b * 100) + '%');
+      /* 重叠部分只有拇指宽，两侧都还露着，所以谁在上面只决定"落在重叠区时抓到谁"。
+         越界的那一个才是该抬起来的：下限过了中点就抬下限，否则默认抬上限。 */
+      rLo.style.zIndex = a > 0.5 ? 4 : 2;
+      rHi.style.zIndex = a > 0.5 ? 2 : 4;
+      oRead.textContent = fmt(rLo.value) + ' – ' + fmt(rHi.value);
+    } else {
+      pos(rSingle, bSingle);
+      oRead.textContent = fmt(rSingle.value);
+    }
+  }
+
+  /* ---------------- 刻度 ---------------- */
+  function buildTicks(host) {
+    /* 上限 11 条：step 调成 1 时是 1001 个节点，密密麻麻反而读不出信息 */
+    var n = Math.min(11, Math.floor((MAX - MIN) / STEP) + 1);
+    var html = '';
+    for (var i = 0; i < n; i++) {
+      var f = n > 1 ? i / (n - 1) : 0;
+      /* 和气泡同一套换算：刻度要对齐拇指中心，不是轨道两端 */
+      html += '<span class="' + (i === 0 || i === n - 1 ? 'edge' : '') +
+              '" style="left:calc(' + f + ' * (100% - var(--thumb)) + var(--thumb) / 2)"></span>';
+    }
+    host.innerHTML = html;
+  }
+
+  /* ---------------- 事件 ---------------- */
+  all.forEach(function (el) {
+    var host = el.parentNode;
+    el.addEventListener('input', schedule);
+    el.addEventListener('pointerdown', function () { host.classList.add('drag'); });
+  });
+  /* 松手要挂在 window：拖出滑块再松手时 input 收不到 pointerup */
+  window.addEventListener('pointerup', function () {
+    sSingle.classList.remove('drag'); sPair.classList.remove('drag');
+  });
+
+  /* ---------------- 控制面板 ---------------- */
+  function mode(pair) {
+    sPair.hidden = !pair;
+    sSingle.hidden = !!pair;
+    oRead.setAttribute('for', pair ? 'rLo rHi' : 'rSingle');
+    if (pair) buildTicks(document.getElementById('tPair'));
+    schedule();
+  }
+  document.getElementById('mSingle').addEventListener('change', function () { mode(false); });
+  document.getElementById('mPair').addEventListener('change', function () { mode(true); });
+
+  ['st1', 'st10', 'st50'].forEach(function (id) {
+    document.getElementById(id).addEventListener('change', function () {
+      STEP = parseInt(this.value, 10);
+      all.forEach(function (el) { el.step = STEP; });
+      buildTicks(document.getElementById('tSingle'));
+      if (!sPair.hidden) buildTicks(document.getElementById('tPair'));
+      schedule();
+    });
+  });
+
+  document.getElementById('cTicks').addEventListener('change', function () {
+    var show = this.checked ? 'block' : 'none';
+    document.getElementById('tSingle').style.display = show;
+    document.getElementById('tPair').style.display = show;
+  });
+  document.getElementById('cYuan').addEventListener('change', function () {
+    yuan = this.checked;
+    schedule();
+  });
+
+  all.forEach(function (el) { el.step = STEP; });
+  buildTicks(document.getElementById('tSingle'));
+  schedule();
+})();
+</script>
+</body>
+</html>

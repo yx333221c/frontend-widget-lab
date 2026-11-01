@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>长按进度菜单 · Widget Lab</title>
+<style>
+  /* ============ 画布 ============ */
+  :root {
+    --bg: #0e1119;
+    --ink: #e9edf6;
+    --sub: #8695b4;
+    --accent: #f7b955;
+  }
+  /* 把 --p 注册成可插值的数字：进度环靠它，取消时能平滑淡回 0。
+     inherits 必须是 true —— 消费它的是 .tile::after，注册成 false 的话
+     伪元素只会拿到 initial-value，环永远不亮。 */
+  @property --p {
+    syntax: "<number>";
+    inherits: true;
+    initial-value: 0;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 14px 20px 12px;
+    background:
+      radial-gradient(100% 80% at 8% -14%, #2a2110 0%, transparent 58%),
+      radial-gradient(90% 70% at 100% 118%, #14303a 0%, transparent 55%),
+      var(--bg);
+    color: var(--ink);
+    font: 13px/1.55 system-ui, "PingFang SC", "Microsoft YaHei", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  h2 { margin: 0 0 3px; font-size: 15px; letter-spacing: -.2px; }
+  p.note { margin: 0 0 12px; color: var(--sub); font-size: 12.5px; }
+
+  /* ============ 图块网格 ============ */
+  .grid {
+    display: grid; gap: 9px;
+    grid-template-columns: repeat(4, 82px);
+    justify-content: center;
+    margin: 0 auto;
+  }
+  .tile {
+    position: relative;
+    height: 52px;
+    display: grid; place-items: center; gap: 1px;
+    font: inherit; color: var(--ink);
+    border-radius: 12px; cursor: pointer;
+    background: rgba(255, 255, 255, .045);
+    border: 1px solid rgba(255, 255, 255, .1);
+    /* --p 能被过渡的前提是它被 @property 注册过 */
+    transition: --p .16s ease-out, background .2s, border-color .2s, transform .12s;
+    touch-action: none;                 /* 触屏：别让长按变成滚动或文本选中 */
+    -webkit-touch-callout: none;        /* iOS：关掉系统那套长按气泡 */
+    user-select: none; -webkit-user-select: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .tile:hover { border-color: rgba(247, 185, 85, .45); }
+  .tile:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .tile .g { font-size: 17px; line-height: 1.1; }
+  .tile .l { font-size: 10.5px; color: var(--sub); }
+
+  /* 按住中：过渡必须关掉，否则每帧写 --p 都被插值拖慢半拍 */
+  .tile.pressing { transition: none; transform: scale(.97); background: rgba(255,255,255,.075); }
+
+  /* 进度环：conic-gradient 铺满一个圆，再用径向遮罩把中间挖空 */
+  .tile::after {
+    content: ""; position: absolute; left: 50%; top: 50%;
+    width: 30px; height: 30px; margin: -15px 0 0 -15px;
+    border-radius: 50%; pointer-events: none;
+    background: conic-gradient(from -90deg,
+      var(--accent) calc(var(--p) * 1turn),
+      rgba(255, 255, 255, .12) 0);
+    -webkit-mask: radial-gradient(circle closest-side, transparent 0 62%, #000 68%);
+    mask: radial-gradient(circle closest-side, transparent 0 62%, #000 68%);
+    /* 显隐直接由 --p 推出：空闲时它是 0，不需要额外的类 */
+    opacity: calc(var(--p) * 2);
+  }
+  body.no-ring .tile::after { opacity: 0; }
+
+  /* 三种由菜单改出来的真实状态 */
+  .tile[data-fav="1"] { border-color: rgba(247, 185, 85, .6); background: rgba(247, 185, 85, .12); }
+  .tile[data-fav="1"]::before {
+    content: "★"; position: absolute; top: 3px; right: 6px;
+    font-size: 10px; color: var(--accent);
+  }
+  .tile[data-copied="1"]::before {
+    content: "⧉"; position: absolute; top: 3px; left: 7px;
+    font-size: 10px; color: #9aa6c0;
+  }
+  .tile[data-fav="1"][data-copied="1"]::before {
+    content: "⧉ ★"; left: 5px; right: auto; color: var(--accent);
+  }
+  .tile.empty {
+    background: rgba(255, 255, 255, .015);
+    border-style: dashed; border-color: rgba(255,255,255,.14);
+    color: #566079; cursor: default;
+  }
+  .tile.empty::after, .tile.empty::before { display: none; }
+
+  /* ============ 浮层菜单（ul 直接当 menu，别在中间插无 role 的元素） ============ */
+  .menu {
+    position: fixed; z-index: 20;
+    list-style: none; margin: 0; padding: 4px;
+    min-width: 124px;
+    border-radius: 11px;
+    background: #171c28;
+    border: 1px solid rgba(255, 255, 255, .14);
+    box-shadow: 0 18px 40px -18px rgba(0, 0, 0, .95);
+    opacity: 0; transform: scale(.94) translateY(-4px);
+    transform-origin: top left;
+    transition: opacity .12s, transform .12s;
+  }
+  .menu.open { opacity: 1; transform: none; }
+  .menu[hidden] { display: none; }
+  .menu button {
+    display: flex; align-items: center; gap: 8px; width: 100%;
+    font: 500 12.5px/1 system-ui, "PingFang SC", sans-serif; color: var(--ink);
+    text-align: left; padding: 8px 9px; border: 0; border-radius: 8px;
+    background: none; cursor: pointer;
+  }
+  .menu button i { font-style: normal; width: 14px; color: var(--sub); }
+  .menu button:hover, .menu button:focus-visible { background: rgba(255,255,255,.08); outline: none; }
+  .menu button:focus-visible i { color: var(--accent); }
+  .menu button.danger { color: #ffb3ce; }
+  .menu .sep { height: 1px; margin: 3px 4px; background: rgba(255,255,255,.09); }
+
+  /* ============ 控制面板 ============ */
+  .panel {
+    display: flex; flex-wrap: wrap; gap: 7px 14px; align-items: center;
+    justify-content: center;
+    margin-top: 11px; padding: 9px 12px; border-radius: 12px;
+    background: rgba(255, 255, 255, .04);
+    border: 1px solid rgba(255, 255, 255, .1);
+    font-size: 11.5px; color: #a9b6d1;
+  }
+  .panel label { display: flex; align-items: center; gap: 6px; white-space: nowrap; cursor: pointer; }
+  .panel input[type="range"] { width: 62px; accent-color: var(--accent); }
+  .panel output { font-variant-numeric: tabular-nums; color: var(--ink); min-width: 40px; }
+  .btn {
+    font: 600 11.5px/1 system-ui; color: var(--ink);
+    padding: 7px 11px; border-radius: 9px; cursor: pointer;
+    background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.14);
+    transition: background .2s, transform .1s;
+  }
+  .btn:hover { background: rgba(255,255,255,.11); }
+  .btn:active { transform: scale(.96); }
+  .status { font: 10.5px/1 ui-monospace, Consolas, monospace; color: #6c7893; min-width: 96px; }
+  .hint { margin: 7px 0 0; text-align: center; color: #6c7893; font-size: 11px; }
+  code { font: 11px ui-monospace, Consolas, monospace; color: #b8c6e6; }
+
+  @media (prefers-reduced-motion: reduce) {
+    /* 只去掉 --p 的插值，保留颜色过渡：环仍然按帧增长，用户看得到"还要多久" */
+    .tile { transition: background .2s, border-color .2s; }
+    .menu { transition: none; }
+  }
+</style>
+</head>
+<body>
+  <h2>长按进度菜单 Long-press Menu</h2>
+  <p class="note">在任意图块上按住不放，走完一圈进度环才弹菜单；移动超出容差或提前松手都会取消。桌面可直接右键。</p>
+
+  <div class="grid" id="grid" role="group" aria-label="图块网格，长按或右键打开操作菜单">
+    <button class="tile" type="button" data-g="◆" data-l="设计"><span class="g">◆</span><span class="l">设计</span></button>
+    <button class="tile" type="button" data-g="▲" data-l="数据"><span class="g">▲</span><span class="l">数据</span></button>
+    <button class="tile" type="button" data-g="●" data-l="消息"><span class="g">●</span><span class="l">消息</span></button>
+    <button class="tile" type="button" data-g="■" data-l="看板"><span class="g">■</span><span class="l">看板</span></button>
+    <button class="tile" type="button" data-g="◀" data-l="上一"><span class="g">◀</span><span class="l">上一</span></button>
+    <button class="tile" type="button" data-g="▶" data-l="下一"><span class="g">▶</span><span class="l">下一</span></button>
+    <button class="tile" type="button" data-g="★" data-l="收藏"><span class="g">★</span><span class="l">收藏</span></button>
+    <button class="tile" type="button" data-g="⬇" data-l="导出"><span class="g">⬇</span><span class="l">导出</span></button>
+    <button class="tile" type="button" data-g="⌗" data-l="布局"><span class="g">⌗</span><span class="l">布局</span></button>
+    <button class="tile" type="button" data-g="◍" data-l="同步"><span class="g">◍</span><span class="l">同步</span></button>
+    <button class="tile" type="button" data-g="⬡" data-l="组件"><span class="g">⬡</span><span class="l">组件</span></button>
+    <button class="tile" type="button" data-g="◎" data-l="定位"><span class="g">◎</span><span class="l">定位</span></button>
+  </div>
+
+  <div class="panel">
+    <label>长按时长
+      <input type="range" id="sHold" min="200" max="1000" step="20" value="600" aria-label="鼠标长按时长，毫秒">
+      <output id="oHold">600ms</output>
+    </label>
+    <label>取消容差
+      <input type="range" id="sTol" min="3" max="24" step="1" value="8" aria-label="移动取消容差，像素">
+      <output id="oTol">8px</output>
+    </label>
+    <label><input type="checkbox" id="cRing" checked> 显示进度环</label>
+    <button class="btn" id="reset" type="button">重置图块</button>
+    <span class="status" id="status" role="status">未操作</span>
+  </div>
+  <p class="hint">时长拉到 <code>1000</code> 会明显等不住；容差调到 <code>3</code>，手一抖就取消。</p>
+
+  <ul class="menu" id="menu" role="menu" aria-label="图块操作菜单" hidden>
+    <li role="none"><button type="button" role="menuitem" data-act="copy"><i>⧉</i>复制</button></li>
+    <li role="none"><button type="button" role="menuitem" data-act="fav"><i>★</i>收藏</button></li>
+    <li class="sep" role="presentation"></li>
+    <li role="none"><button type="button" role="menuitem" class="danger" data-act="del"><i>✕</i>删除</button></li>
+  </ul>
+
+<script>
+(function () {
+  'use strict';
+
+  var grid = document.getElementById('grid');
+  var tiles = Array.prototype.slice.call(grid.querySelectorAll('.tile'));
+  var menu = document.getElementById('menu');
+  var items = Array.prototype.slice.call(menu.querySelectorAll('[role="menuitem"]'));
+  var statusEl = document.getElementById('status');
+
+  var CFG = { hold: 600, tol: 8 };
+  var press = null;      // { el, id, type, x0, y0, t0, p, raf }
+  var owner = null;      // 菜单当前归属的图块
+
+  /* 触屏没有"悬停误点"的顾虑，反而更容易手抖，时长取得比鼠标短。
+     同一份配置按 pointerType 折算，别把所有输入都当鼠标。 */
+  function durationOf(type) {
+    return type === 'touch' ? Math.round(CFG.hold * 0.75) : CFG.hold;
+  }
+  function setP(el, v) { el.style.setProperty('--p', v.toFixed(3)); }
+
+  /* ---------- 计时：每帧一次，走满即触发 ---------- */
+  function tick(t) {
+    if (!press) return;
+    var p = (t - press.t0) / durationOf(press.type);
+    if (p >= 1) { press.p = 1; setP(press.el, 1); fire(); return; }
+    press.p = p < 0 ? 0 : p;
+    setP(press.el, press.p);
+    press.raf = requestAnimationFrame(tick);
+  }
+
+  function begin(e) {
+    var el = e.target.closest ? e.target.closest('.tile') : null;
+    if (!el || el.classList.contains('empty')) return;
+    closeMenu(false);
+    press = {
+      el: el, id: e.pointerId, type: e.pointerType,
+      x0: e.clientX, y0: e.clientY, t0: performance.now(), p: 0, raf: null
+    };
+    el.classList.add('pressing');
+    if (el.setPointerCapture) el.setPointerCapture(e.pointerId);
+    setP(el, 0);
+    press.raf = requestAnimationFrame(tick);
+  }
+
+  /* 取消：把 --p 交回 CSS，让它插值回 0（注册过 @property 才做得到） */
+  function cancel() {
+    if (!press) return;
+    var el = press.el, shown = press.p;
+    if (press.raf) cancelAnimationFrame(press.raf);
+    if (el.hasPointerCapture && el.hasPointerCapture(press.id)) el.releasePointerCapture(press.id);
+    el.classList.remove('pressing');
+    el.style.removeProperty('--p');   // 回到 initial-value: 0，过渡负责淡出
+    press = null;
+    /* 进度没走出一小截就不播报，否则每次普通点击都冒一句"已取消" */
+    if (shown > 0.08) say('已取消（走完 ' + Math.round(shown * 100) + '%）');
+  }
+
+  function fire() {
+    var el = press.el, x = press.x0, y = press.y0;
+    if (press.raf) cancelAnimationFrame(press.raf);
+    if (el.hasPointerCapture && el.hasPointerCapture(press.id)) el.releasePointerCapture(press.id);
+    el.classList.remove('pressing');
+    el.style.removeProperty('--p');
+    press = null;
+    openMenu(el, x, y);
+  }
+
+  grid.addEventListener('pointerdown', begin);
+
+  grid.addEventListener('pointermove', function (e) {
+    if (!press || e.pointerId !== press.id) return;
+    /* 必须监听 move 并取消：不监听的话，长按拖动会选中文字、
+       或者手指滑到别的图块上还把菜单弹在原来那块，位置全错。 */
+    if (Math.abs(e.clientX - press.x0) > CFG.tol || Math.abs(e.clientY - press.y0) > CFG.tol) {
+      cancel();
+    }
+  });
+
+  function end(e) {
+    if (!press || (e && e.pointerId !== press.id)) return;
+    cancel();        // 没走满就松手 = 取消，不是"部分触发"
+  }
+  grid.addEventListener('pointerup', end);
+  grid.addEventListener('pointercancel', cancel);
+
+  /* 触屏长按时系统会派发 contextmenu；菜单自己做，就得拦住它。
+     桌面右键借这个事件直接开菜单，比让人练 600ms 长按更合理。 */
+  grid.addEventListener('contextmenu', function (e) {
+    e.preventDefault();
+    var el = e.target.closest ? e.target.closest('.tile') : null;
+    if (!el || el.classList.contains('empty')) return;
+    cancel();
+    openMenu(el, e.clientX, e.clientY);
+  });
+
+  /* ---------- 键盘入口：聚焦图块后 Enter / Space 也能开 ---------- */
+  grid.addEventListener('keydown', function (e) {
+    var el = e.target.closest ? e.target.closest('.tile') : null;
+    if (!el || el.classList.contains('empty')) return;
+    if (e.key === 'Enter' || e.key === ' ' || e.key === 'ArrowDown') {
+      e.preventDefault();
+      var b = el.getBoundingClientRect();   // 一次性读取，不在每帧循环里
+      openMenu(el, b.left + 8, b.bottom + 4);
+    }
+  });
+
+  /* ---------- 菜单：定位、焦点、关闭 ---------- */
+  function openMenu(el, x, y) {
+    owner = el;
+    menu.hidden = false;
+    /* 先量尺寸再定位，免得菜单飞出视口；这里是一次性布局读取，可以接受 */
+    var w = menu.offsetWidth, h = menu.offsetHeight;
+    menu.style.left = Math.max(8, Math.min(x, window.innerWidth - w - 8)) + 'px';
+    menu.style.top = Math.max(8, Math.min(y, window.innerHeight - h - 8)) + 'px';
+    requestAnimationFrame(function () { menu.classList.add('open'); });
+    el.setAttribute('aria-expanded', 'true');
+    items[0].focus();          // 焦点直接进菜单，Esc 才有人接得住
+    say('菜单：' + (el.dataset.l || ''));
+  }
+
+  /* returnFocus 只在键盘路径下为真：鼠标操作时不该把焦点抢回图块 */
+  function closeMenu(returnFocus) {
+    if (menu.hidden) return;
+    menu.classList.remove('open');
+    menu.hidden = true;
+    if (owner) {
+      owner.setAttribute('aria-expanded', 'false');
+      if (returnFocus) owner.focus();
+    }
+    owner = null;
+  }
+
+  menu.addEventListener('keydown', function (e) {
+    var i = items.indexOf(document.activeElement);
+    if (e.key === 'Escape') { closeMenu(true); return; }
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      var step = e.key === 'ArrowDown' ? 1 : -1;
+      items[(i < 0 ? 0 : (i + step + items.length) % items.length)].focus();
+      return;
+    }
+    if (e.key === 'Home') { e.preventDefault(); items[0].focus(); }
+    if (e.key === 'End') { e.preventDefault(); items[items.length - 1].focus(); }
+    if (e.key === 'Tab') closeMenu(true);   // Tab 离开菜单就等于关掉
+  });
+
+  menu.addEventListener('click', function (e) {
+    var b = e.target.closest ? e.target.closest('[role="menuitem"]') : null;
+    if (!b || !owner) return;
+    var byKeyboard = e.detail === 0;        // 键盘激活出来的 click，detail 为 0
+    apply(b.dataset.act, owner);
+    closeMenu(byKeyboard);
+  });
+
+  /* 点菜单外面就关：用 pointerdown 的捕获阶段，赶在图块 begin 之前 */
+  document.addEventListener('pointerdown', function (e) {
+    if (menu.hidden || menu.contains(e.target)) return;
+    closeMenu(false);
+  }, true);
+  window.addEventListener('blur', function () { closeMenu(false); });
+  window.addEventListener('scroll', function () { closeMenu(false); }, { passive: true });
+
+  /* ---------- 菜单项真的改变格子状态 ---------- */
+  function apply(act, el) {
+    var name = el.dataset.l || '';
+    if (act === 'copy') {
+      el.dataset.copied = el.dataset.copied === '1' ? '0' : '1';
+      say('复制 ' + name + (el.dataset.copied === '1' ? ' ✓' : ' ✕'));
+    } else if (act === 'fav') {
+      el.dataset.fav = el.dataset.fav === '1' ? '0' : '1';
+      say('收藏 ' + name + (el.dataset.fav === '1' ? ' ★' : ' ☆'));
+    } else if (act === 'del') {
+      el.dataset.fav = '0'; el.dataset.copied = '0';
+      el.classList.add('empty');
+      el.setAttribute('aria-disabled', 'true');
+      el.querySelector('.g').textContent = '·';
+      el.querySelector('.l').textContent = '空位';
+      say('已删除 ' + name);
+    }
+  }
+  function say(t) { statusEl.textContent = t; }
+
+  document.getElementById('reset').addEventListener('click', function () {
+    tiles.forEach(function (el) {
+      el.classList.remove('empty', 'pressing');
+      el.removeAttribute('aria-disabled');
+      el.dataset.fav = '0'; el.dataset.copied = '0';
+      el.style.removeProperty('--p');
+      el.querySelector('.g').textContent = el.dataset.g;
+      el.querySelector('.l').textContent = el.dataset.l;
+    });
+    say('已重置');
+  });
+
+  /* ---------- 控制面板 ---------- */
+  function bindRange(id, outId, key, fmt) {
+    var inp = document.getElementById(id), out = document.getElementById(outId);
+    var run = function () { CFG[key] = parseFloat(inp.value); out.textContent = fmt(inp.value); };
+    inp.addEventListener('input', run);
+    run();
+  }
+  bindRange('sHold', 'oHold', 'hold', function (v) { return v + 'ms'; });
+  bindRange('sTol', 'oTol', 'tol', function (v) { return v + 'px'; });
+  document.getElementById('cRing').addEventListener('change', function () {
+    document.body.classList.toggle('no-ring', !this.checked);
+  });
+
+  tiles.forEach(function (el) {
+    el.setAttribute('aria-haspopup', 'menu');
+    el.setAttribute('aria-expanded', 'false');
+  });
+})();
+</script>
+</body>
+</html>

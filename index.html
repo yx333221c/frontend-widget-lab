@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Widget Lab · 前端交互组件实验室</title>
+<meta name="description" content="24 个可直接复制的前端组件：动效、交互手感、表单控件、数据可视化、质感光影与趣味彩蛋。每个组件含实时演示、说明、源码与制作教学。">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'><stop offset='0' stop-color='%237c5cff'/><stop offset='1' stop-color='%2324d3ee'/></linearGradient></defs><rect width='32' height='32' rx='8' fill='url(%23g)'/><path d='M9 20c2-8 4-8 6 0s4 8 6 0' stroke='%23fff' stroke-width='2.4' fill='none' stroke-linecap='round'/></svg>">
+<link rel="stylesheet" href="assets/base.css">
+</head>
+<body>
+<div class="aurora" aria-hidden="true"><span></span><span></span><span></span></div>
+
+<header class="topbar">
+  <div class="topbar-inner">
+    <a class="brand" href="./"><span class="brand-mark" aria-hidden="true"></span> Widget Lab</a>
+    <nav>
+      <a href="#catalog">目录</a>
+      <a href="#how">怎么用</a>
+      <a href="https://github.com/yx333221c/frontend-widget-lab" target="_blank" rel="noopener">源码仓库</a>
+    </nav>
+    <span class="spacer"></span>
+    <button class="btn sm" id="themeBtn" title="切换主题">🌙 夜间</button>
+  </div>
+</header>
+
+<main>
+  <section class="hero">
+    <h1>把「手感」拆成<br><em>可以抄走的 24 个组件</em></h1>
+    <p class="lede">
+      这里不收罗特式的教程，也不给开箱即用的框架。每个组件都是一个<strong>独立可运行的 HTML 文件</strong>：
+      上半屏看效果，下半屏读源码，再配一篇讲清「为什么这样写」的教学。
+      复制文件、粘贴进你的项目、改两个变量，它就归你了。
+    </p>
+    <div class="hero-stats">
+      <span><b id="statCount">—</b>个组件</span>
+      <span><b id="statCat">—</b>个分类</span>
+      <span><b>0</b>个依赖</span>
+      <span><b>1</b>个文件 / 组件</span>
+    </div>
+  </section>
+
+  <section class="toolbar" id="catalog">
+    <label class="search">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4">
+        <circle cx="11" cy="11" r="7"/><path d="M20 20l-4.3-4.3"/>
+      </svg>
+      <input id="q" type="search" placeholder="搜名字、技术点或关键词（如 blur / 拖拽 / 极坐标）" aria-label="搜索组件">
+    </label>
+    <div class="chips" id="chips" role="group" aria-label="按分类筛选"></div>
+    <div class="chips" id="diffs" role="group" aria-label="按难度筛选"></div>
+    <span class="spacer"></span>
+    <span class="mini" id="resultCount"></span>
+  </section>
+
+  <div id="catalogBody"></div>
+  <div class="empty" id="emptyState" hidden>没有匹配的组件 —— 换个关键词试试，或点 <a href="#how">使用方式</a>。</div>
+
+  <section class="section" id="how">
+    <div class="cat-head"><span class="glyph">🧭</span><h2>怎么用这个站</h2></div>
+    <div class="prose">
+      <p>每个组件详情页固定四段，对应四种阅读深度：</p>
+      <div class="kv">
+        <div><dt>① 组件展示</dt><dd>真·运行中的 iframe，可以直接上手操作</dd></div>
+        <div><dt>② 组件描述</dt><dd>它解决什么问题、关键技术点、踩坑预警</dd></div>
+        <div><dt>③ 组件代码</dt><dd>完整源码 + 语法高亮 + 一键「在 GitHub 打开」</dd></div>
+        <div><dt>④ 制作教学</dt><dd>分步拆解原理，同样带 GitHub 原文链接</dd></div>
+      </div>
+      <p>
+        难度分三档：<span class="tag">入门</span> 半小时能读完并改；
+        <span class="tag">进阶</span> 需要理解一两个非直观机制；
+        <span class="tag">高级</span> 涉及物理、状态机或滤镜管线，建议先读教学再看码。
+      </p>
+      <p>
+        源码不依赖任何构建工具与第三方库，<strong>纯 HTML + CSS + 原生 JS</strong>。
+        把单个 <code>.html</code> 存到本地双击打开即可运行；想直接看文件内容，点每张卡片上的「GitHub」。
+      </p>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="in">
+    <span>Widget Lab —— 手写组件集，全部单文件、零依赖。按 <kbd>/</kbd> 搜索。</span>
+    <span>
+      <a href="https://github.com/yx333221c/frontend-widget-lab" target="_blank" rel="noopener">GitHub 仓库</a>
+      · <a href="./">返回目录</a>
+    </span>
+  </div>
+</footer>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script src="data/widgets.js"></script>
+<script src="assets/home.js"></script>
+</body>
+</html>
