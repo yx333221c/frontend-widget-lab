@@ -203,13 +203,24 @@
 
   /* ================================================================
      取文件（GitHub Pages / http 直接 fetch；file:// 时降级为提示）
+     Pages 的 CDN 偶发 5xx 与冷启动超时，一次失败就放弃会让整段永久空白，
+     所以网络错误和 5xx 退避重试；404 是真缺文件，不重试。
      ================================================================ */
-  function getFile(path) {
+  function getFile(path, attempt) {
+    attempt = attempt || 0;
     if (location.protocol === 'file:') return Promise.reject(new Error('LOCAL'));
     return fetch(path, { cache: 'no-store' }).then(function (res) {
-      if (!res.ok) throw new Error('HTTP ' + res.status);
-      return res.text();
+      if (res.ok) return res.text();
+      if (res.status >= 500 && attempt < 3) return later(path, attempt);
+      throw new Error('HTTP ' + res.status);
+    }, function () {                       /* 网络层错误：断网、超时、被中断 */
+      if (attempt < 3) return later(path, attempt);
+      throw new Error('网络不可达');
     });
+  }
+  function later(path, attempt) {
+    return new Promise(function (r) { setTimeout(r, 400 * (attempt + 1)); })
+      .then(function () { return getFile(path, attempt + 1); });
   }
 
   /* ================================================================
