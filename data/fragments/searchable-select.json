@@ -1,0 +1,21 @@
+{
+  "id": "searchable-select",
+  "what": "按 APG 的 Combobox 模式实现：输入框始终是唯一持有焦点的元素，当前行用 aria-activedescendant 指认，不移动 DOM 焦点。匹配是自写的子序列打分器（连续命中递增加分、整词前缀加分），同时搜技术名、中文别名和拼音首字母，命中字母用 mark 标出。和原生 select 相比多了过滤与高亮，代价是键盘、播报、开合判定都要自己补齐。",
+  "points": [
+    { "k": "aria-activedescendant", "v": "焦点钉在输入框，输入法候选窗不被打断，读屏器也不会把浏览当成选中" },
+    { "k": "子序列打分", "v": "连续命中按 1+2+3 递增加分、首字符再加分，bl 才排在 mix-blend-mode 前面" },
+    { "k": "空态不是 option", "v": "role=listbox 里只能放 role=option，否则那行提示会被念成一个选项" },
+    { "k": "rAF 合帧 + 条数上限", "v": "input 事件比刷新率密，去重后一帧只写一次 DOM；截断时把总命中数一起播报" },
+    { "k": "scrollIntoView nearest", "v": "行已可见就不滚，center 会每按一次都把它搬回中间" },
+    { "k": "focusout + relatedTarget", "v": "用浏览器给的焦点去向判开合，null 分支交给 pointerdown，不需要手写焦点陷阱" }
+  ],
+  "tryIt": [
+    "输入 bl，看 blur 排在 mix-blend-mode 前面，以及命中的 b、l 被标色",
+    "输入 mh（模糊的拼音首字母），只有 blur 命中",
+    "Tab 进输入框后用 ↓↑ 移动、Home/End 跳两端、回车选中，全程焦点都在输入框",
+    "用中文输入法打拼音，注意候选窗不会因过滤而消失",
+    "切到多选模式连续选几项，再按退格删掉最后一颗 chip"
+  ],
+  "trap": "多选模式下点一行，chip 加上了但弹窗同时被关掉，无法连续选。原因是这次 pointerdown 先跑 pop 的处理器（选中并重建 innerHTML），再冒泡到 document 的\"点外面\"处理器；此刻 e.target 是刚被替换掉、已脱离文档树的旧节点，combo.contains() 返回 false 被误判成点了外部。修法是一次性 handled 标志，别用 setTimeout 错峰。",
+  "suite": "候选项几十到几百条、需要边搜边选的场景（命令面板、指标选择、标签录入）。选项少于 6 个用原生 select 更好；移动端主屏建议按 pointer: coarse 退回原生选择器。"
+}

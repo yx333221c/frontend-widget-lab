@@ -185,12 +185,26 @@
 ## 6. 自检（交付前必做）
 
 ```powershell
-# 1) JSON 合法
-node -e "JSON.parse(require('fs').readFileSync('data/fragments/<id>.json','utf8'))"
+# 1) 结构 + 语言校验（可传 id 只查自己的）
+node tools/check.mjs <id> [<id2> ...]
 
-# 2) 没有外部依赖 / 没有禁用 API
-#    搜自己那 4 个文件，不应出现 https://、fetch(、localStorage、<img src="./
+# 2) 深度语言审计：抓 check.mjs 词表之外的玄学词与无出处数字
+node tools/audit.mjs <id> [<id2> ...]
+
+# 3) json 单独确认合法
+node -e "JSON.parse(require('fs').readFileSync('data/fragments/<id>.json','utf8'))"
 ```
+
+两个都要**零错误零警告**才算交付。`check.mjs` 拦典型套话与文档骨架，
+`audit.mjs` 拦"高级感 / 通透感 / 丝滑"这类词表盖不住的观感词，并核对散文里的
+数字能否在代码块或组件源码里找到出处（同一句内有可查数字时视为推导值，放过）。
+
+另外自查：搜自己那三个文件，不应出现 `https://`、`fetch(`、`localStorage`、`<img src="./`。
+
+自查脚本请写在仓库外，或放在 `tools/_` 前缀下（已在 `.gitignore` 里），
+不要污染仓库根目录。
 
 渲染验证由 Lead 统一用 headless Chrome 截图，但你要保证：
 **用浏览器直接打开 `widgets/<cat>/<id>.html` 就能看到完整效果且不报错。**
+截图同时能暴露纯读代码看不出的几何问题（元素被遮挡、内容超出 viewport），
+建议自己也跑 `node tools/shoot.mjs <id>` 看一眼 `assets/shots/<id>.png`。

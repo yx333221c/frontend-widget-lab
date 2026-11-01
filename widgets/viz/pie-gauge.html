@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>环形进度仪表 · Widget Lab</title>
+<style>
+  :root {
+    --bg: #0e1119;
+    --ink: #e9edf6;
+    --sub: #8695b4;
+    --accent: #35d18e;
+    --c: #35d18e;              /* 当前阈值色，JS 按值改 */
+    --p: 0%;                   /* 已注册的进度：可补间 */
+    --q: 0%;                   /* 未注册的进度：不可补间，用来做对比 */
+    --dur: 900ms;
+    --ease: cubic-bezier(.215, .61, .355, 1);   /* easeOutCubic */
+  }
+  /* 关键一行：不注册这条规则，--p 就只是字符串，transition 拿它没办法 */
+  @property --p {
+    syntax: '<percentage>';
+    inherits: false;
+    initial-value: 0%;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 22px 20px;
+    background:
+      radial-gradient(120% 90% at 8% -20%, #14312a 0%, transparent 60%),
+      radial-gradient(90% 80% at 100% 120%, #1b2140 0%, transparent 55%),
+      var(--bg);
+    color: var(--ink);
+    font: 14px/1.6 system-ui, "PingFang SC", "Microsoft YaHei", sans-serif;
+    overflow-x: hidden;
+  }
+  h2 { margin: 0 0 3px; font-size: 15px; letter-spacing: -.2px; }
+  p.note { margin: 0 0 10px; color: var(--sub); font-size: 12px; }
+  code { font: 11.5px ui-monospace, Consolas, monospace; color: #b8c6e6; }
+
+  .wrap { display: flex; flex-wrap: wrap; gap: 16px; align-items: center; }
+
+  /* ============ 仪表 ============ */
+  .gauge { position: relative; width: 132px; height: 132px; flex: none; }
+  .band, .ring { position: absolute; border-radius: 50%; }
+
+  /* 外圈：三段阈值带，一个 conic 里三段落 */
+  .band {
+    inset: 0;
+    -webkit-mask: radial-gradient(closest-side, transparent 85%, #000 86%);
+            mask: radial-gradient(closest-side, transparent 85%, #000 86%);
+  }
+  /* 内圈：进度。挖空中心用 mask，不是盖一个实心圆 */
+  .ring {
+    inset: 10px;
+    background: conic-gradient(from -90deg, var(--c) 0 var(--p),
+                               rgba(255, 255, 255, .07) var(--p) 100%);
+    -webkit-mask: radial-gradient(closest-side, transparent 76%, #000 77%);
+            mask: radial-gradient(closest-side, transparent 76%, #000 77%);
+    transition: --p var(--dur) var(--ease), background-color 400ms linear;
+  }
+  /* 关掉 @property 的对比态：同一个环改用未注册的 --q，补间退化成跳变 */
+  body.unreg .ring {
+    background: conic-gradient(from -90deg, var(--c) 0 var(--q),
+                               rgba(255, 255, 255, .07) var(--q) 100%);
+    transition: --q var(--dur) var(--ease);
+  }
+  .mid {
+    position: absolute; inset: 0; display: grid; place-content: center;
+    text-align: center; line-height: 1.05; pointer-events: none;
+  }
+  .mid b { font-size: 30px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .mid span { display: block; font-size: 9.5px; color: var(--sub); letter-spacing: .3px; }
+
+  .read { flex: 1 1 190px; min-width: 180px; font-size: 11.5px; color: #a9b6d1; }
+  .read .big { font-size: 12.5px; color: var(--ink); margin-bottom: 6px; }
+  .read .big em { font-style: normal; font-weight: 700; }
+  .zones { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+  .zones li {
+    display: flex; align-items: center; gap: 7px; padding: 3px 7px; border-radius: 8px;
+    font-size: 11px; border: 1px solid transparent; transition: background .18s, border-color .18s;
+  }
+  .zones li i { width: 8px; height: 8px; border-radius: 2px; flex: none; }
+  .zones li b { color: var(--ink); font-variant-numeric: tabular-nums; }
+  .zones li.on { background: rgba(255, 255, 255, .07); border-color: rgba(255, 255, 255, .16); }
+  .hint { margin: 7px 0 0; font-size: 10.5px; color: #6c7893; }
+
+  .panel {
+    display: flex; flex-wrap: wrap; gap: 5px 14px; align-items: center;
+    margin-top: 8px; padding: 6px 11px; border-radius: 12px;
+    background: rgba(255, 255, 255, .04); border: 1px solid rgba(255, 255, 255, .1);
+    font-size: 11.5px; color: #a9b6d1;
+  }
+  .panel label { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+  .panel input[type="range"] { width: 96px; accent-color: var(--accent); }
+  .panel output { font-variant-numeric: tabular-nums; color: var(--ink); min-width: 26px; }
+  .chk { cursor: pointer; }
+  .btn {
+    font: 600 11.5px/1 system-ui, sans-serif; color: var(--ink);
+    padding: 6px 10px; border-radius: 9px; cursor: pointer;
+    background: rgba(255, 255, 255, .07); border: 1px solid rgba(255, 255, 255, .14);
+    transition: background .2s, border-color .2s, transform .1s;
+  }
+  .btn:hover { background: rgba(53, 209, 142, .2); border-color: rgba(53, 209, 142, .6); }
+  .btn:active { transform: translateY(1px); }
+</style>
+</head>
+<body>
+  <h2>环形进度仪表 Pie Gauge</h2>
+  <p class="note">数据：某服务本月 SLA 达标率（0–100，当前 72）。外圈三段阈值带，指针停在某段会高亮它。</p>
+
+  <div class="wrap">
+    <div class="gauge">
+      <div class="band" id="band"></div>
+      <div class="ring" id="ring"></div>
+      <div class="mid"><b id="num">0</b><span>SLA 达标率 %</span></div>
+    </div>
+
+    <div class="read">
+      <p class="big" id="say">当前 <em>72</em>，落在「观察」区间</p>
+      <ul class="zones" id="zones"></ul>
+    </div>
+  </div>
+
+  <div class="panel">
+    <label>目标值
+      <input type="range" id="sTarget" min="0" max="100" step="1" value="72" aria-label="目标值">
+      <output id="oTarget">72</output>
+    </label>
+    <button class="btn" id="bReplay" aria-label="重播动画">↻ 重播</button>
+    <label class="chk"><input type="checkbox" id="cProp" checked aria-label="注册 @property"> 注册 @property</label>
+  </div>
+
+<script>
+(function () {
+  'use strict';
+
+  var REDUCE = window.matchMedia &&
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var DUR = REDUCE ? 0 : 900;
+
+  /* ---------------- 三段阈值：颜色和区间都写死 ---------------- */
+  var ZONES = [
+    { a: 0,  b: 50,  name: '危险', c: '#ff5f9e' },
+    { a: 50, b: 80,  name: '观察', c: '#f7b955' },
+    { a: 80, b: 100, name: '良好', c: '#35d18e' }
+  ];
+
+  var ring = document.getElementById('ring'),
+      band = document.getElementById('band'),
+      num = document.getElementById('num'),
+      say = document.getElementById('say'),
+      zonesEl = document.getElementById('zones');
+
+  /* ---------------- 图例（同时也是 hover 的镜像反馈） ---------------- */
+  var lis = ZONES.map(function (z, i) {
+    var li = document.createElement('li');
+    li.innerHTML = '<i style="background:' + z.c + '"></i>' +
+      '<b>' + z.a + '–' + z.b + '</b> ' + z.name;
+    zonesEl.appendChild(li);
+    return li;
+  });
+
+  /* ---------------- 外圈：多段 conic 一次画完 ----------------
+     高亮某段 = 重写 background。conic 里没有 DOM 可以 :hover，只能重画。 */
+  var active = null;        // 故意不用 -1：否则首次 setActive(-1) 会被下面的早退吃掉
+  function bandCss(on) {
+    var stops = ZONES.map(function (z, i) {
+      return (i === on ? z.c : z.c + '40') + ' ' + z.a + '% ' + z.b + '%';
+    });
+    return 'conic-gradient(from -90deg,' + stops.join(',') + ')';
+  }
+  function setActive(i) {
+    if (i === active) return;
+    active = i;
+    band.style.background = bandCss(i);
+    lis.forEach(function (li, k) { li.classList.toggle('on', k === i); });
+  }
+  setActive(-1);
+
+  /* ---------------- 命中判定：atan2 反算角度 ----------------
+     mask 不改变元素的命中区域（整个方框都吃事件），
+     所以"停在哪个扇区"必须自己算：先筛半径，再换算角度。 */
+  function zoneAt(pct) {
+    for (var i = 0; i < ZONES.length; i++) {
+      if (pct >= ZONES[i].a && pct < ZONES[i].b) return i;
+    }
+    return ZONES.length - 1;
+  }
+  band.addEventListener('pointermove', function (e) {
+    var r = band.getBoundingClientRect();
+    var dx = e.clientX - (r.left + r.width / 2);
+    var dy = e.clientY - (r.top + r.height / 2);
+    var rad = Math.hypot(dx, dy) / (r.width / 2);
+    if (rad < 0.84 || rad > 1.04) { setActive(-1); return; }   // 不在环带上
+    var deg = Math.atan2(dy, dx) * 180 / Math.PI + 90;         // 0 = 正上方，顺时针
+    if (deg < 0) deg += 360;
+    setActive(zoneAt(deg / 3.6));
+  }, { passive: true });
+  band.addEventListener('pointerleave', function () { setActive(-1); });
+
+  /* ---------------- 中心数字：easeOutCubic，时长与环一致 ---------------- */
+  var raf = null, shown = 0, from = 0, to = 0, t0 = -1;
+  function easeOutCubic(t) { return 1 - Math.pow(1 - t, 3); }
+
+  function countUp(target) {
+    from = shown; to = target; t0 = -1;          // -1 = "等下一帧的时间戳再定基准"
+    if (DUR === 0) { shown = target; num.textContent = target; return; }
+    if (!raf) raf = requestAnimationFrame(tick);
+  }
+  function tick(t) {
+    /* 基准必须取 rAF 传进来的时间戳。用 performance.now() 会拿到比它更晚的值，
+       第一帧的 k 就成了负数，easeOutCubic(负数) 也是负数，数字会先倒着走。 */
+    if (t0 < 0) t0 = t;
+    var k = Math.min(1, (t - t0) / DUR);
+    shown = from + (to - from) * easeOutCubic(k);
+    num.textContent = Math.round(shown);
+    raf = k < 1 ? requestAnimationFrame(tick) : null;   // 跑完就停，不常驻
+  }
+
+  /* ---------------- 应用一个值 ---------------- */
+  var cur = 72;
+  function apply(v) {
+    cur = v;
+    var z = ZONES[zoneAt(v)];
+    document.documentElement.style.setProperty('--c', z.c);
+    /* 两个属性一起写：注册与否只决定 CSS 用哪个，值始终同步 */
+    ring.style.setProperty('--p', v + '%');
+    ring.style.setProperty('--q', v + '%');
+    say.innerHTML = '当前 <em>' + v + '</em>，落在「' + z.name + '」' + z.a + '–' + z.b;
+    countUp(v);
+  }
+
+  var sTarget = document.getElementById('sTarget'), oTarget = document.getElementById('oTarget');
+  sTarget.addEventListener('input', function () {
+    oTarget.textContent = sTarget.value;
+    apply(+sTarget.value);
+  });
+  document.getElementById('bReplay').addEventListener('click', function () {
+    /* 归零再上：先看环从 0 转起来，才知道它到底有没有在补间 */
+    ring.style.setProperty('--p', '0%');
+    ring.style.setProperty('--q', '0%');
+    shown = 0; num.textContent = '0';
+    setTimeout(function () { apply(cur); }, DUR ? 60 : 0);
+  });
+  document.getElementById('cProp').addEventListener('change', function () {
+    document.body.classList.toggle('unreg', !this.checked);
+  });
+
+  if (REDUCE) document.documentElement.style.setProperty('--dur', '0ms');
+
+  /* 启动：先铺 0，再上到目标值，让入场就有一次完整的补间 */
+  apply(0);
+  setTimeout(function () { apply(72); }, REDUCE ? 0 : 220);
+})();
+</script>
+</body>
+</html>

@@ -215,11 +215,11 @@
         el.style.animationPlayState = s === 0 ? 'paused' : 'running';
         if (s > 0) el.style.animationDuration = s + 's';
       });
-      /* 内圆角公式：算出负数时浏览器按 0 处理，视觉上是"外圆内方" */
+      /* 内圆角公式：算出负数时浏览器按 0 处理，结果是外圆内方 */
       var inner = r - w;
       elInner.textContent = (inner < 0 ? 0 : inner) + 'px';
-      elWarn.innerHTML = inner < 0 ? ' <em>← 已为负，内角退化成直角</em>'
-                                   : (r >= 30 ? ' <em>← 大圆角，A 的内侧折线最容易露出来</em>' : '');
+      elWarn.innerHTML = inner < 0 ? ' <em>← 已为负，内角按 0 处理</em>'
+                                   : (r >= 30 ? ' <em>← 内外角之差 = 描边 ' + w + 'px</em>' : '');
     });
   }
   [sSpeed, sWidth, sRadius].forEach(function (i) { i.addEventListener('input', sync); });

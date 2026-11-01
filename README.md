@@ -50,6 +50,7 @@ CONTRIBUTING.md       新增组件的硬性规范
 
 ```powershell
 node tools/check.mjs        # 结构校验：文件齐全 / json 合法 / 文档骨架 / 语言规范（AI 味词表、破折号密度）
+node tools/audit.mjs        # 深度语言审计：抓"高级感/通透感"这类玄学词，以及代码里找不到出处的数字
 node tools/shoot.mjs        # headless Chrome 给全部组件拍缩略图 -> assets/shots/
 node tools/httpcheck.mjs    # 起本地服务验证详情页四段是否真的填充
 node tools/mkreadme.mjs     # 从注册表重新生成本文件
@@ -60,4 +61,4 @@ node tools/mkreadme.mjs     # 从注册表重新生成本文件
 代码与文档以学习为目的开放，MIT。
 
 ---
-*当前状态：20/24 个组件已完成源码与教学。*
+*当前状态：24/24 个组件已完成源码与教学。*

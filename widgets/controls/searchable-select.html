@@ -27,12 +27,19 @@
 
   /* ============ Combobox 外壳 ============ */
   .combo { position: relative; max-width: 420px; }
-  /* 已选 chip 放在输入框上方：弹窗向下长，两者永远不会重叠 */
-  .tags { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; min-height: 22px; }
+  /* 已选 chip 条：最多占两行，再长就裁掉（宁可少显示，也不让 iframe 被顶高） */
+  .tags {
+    display: flex; flex-wrap: wrap; gap: 6px;
+    margin-bottom: 8px; max-height: 50px; overflow: hidden;
+  }
   .tags[hidden] { display: none; }
-  /* .slot 预留弹窗的最大高度（top 38 + max-height 132 + 2 边框 = 172），
-     绝对定位的列表于是只会压在这段空白上，不会盖住下面的读数与控制面板 */
-  .slot { position: relative; min-height: 174px; }
+  /* .slot 预留弹窗的最大高度（top 38 + max-height 118 + 2 边框 = 158），
+     绝对定位的列表于是只会压在这段空白上，不会盖住读数与控制面板。
+     chip 条出现时把预留段和弹窗一起收矮，整块 combo 的总高度才不会变。
+     收矮靠给 .combo 挂 .tagging 类，不用 :has()：少一个"要查父级"的心智负担。 */
+  .slot { position: relative; min-height: 160px; }
+  .combo.tagging .slot { min-height: 102px; }
+  .combo.tagging #pop { max-height: 60px; }
   .row { display: flex; gap: 6px; }
   .box {
     flex: 1 1 auto; min-width: 0;
@@ -69,7 +76,7 @@
   #pop {
     position: absolute; left: 0; right: 0; top: 38px; z-index: 20;
     margin: 0; padding: 4px; list-style: none;
-    max-height: 132px; overflow-y: auto; overscroll-behavior: contain;
+    max-height: 118px; overflow-y: auto; overscroll-behavior: contain;
     border-radius: 10px;
     background: rgba(16, 22, 28, .97);
     border: 1px solid rgba(255, 255, 255, .12);
@@ -300,7 +307,7 @@
               ' aria-selected="' + (k === act ? 'true' : 'false') + '">' +
               (it.picked ? '<span class="tick" aria-hidden="true">✓</span>' : '') +
               '<span class="nm">' + nm + '</span><span class="cn">' + cn + '</span>' +
-              '<span class="py">' + esc(it.py) + '</span></li>';
+              '<span class="py" aria-hidden="true">' + esc(it.py) + '</span></li>';
     }
     pop.innerHTML = html;
     /* 空态不能当 listbox 的子节点：role=listbox 里只允许 role=option，
@@ -380,6 +387,13 @@
   }
 
   /* ---------------- 多选 tag：每颗是带真 button 的 chip ---------------- */
+  /* chip 条可见时挂 .tagging，把预留段与弹窗一起收矮，整块高度不变 */
+  function syncTray() {
+    var show = multi && tags.children.length > 0;
+    tags.hidden = !show;
+    combo.classList.toggle('tagging', show);
+  }
+
   function addTag(it) {
     var chip = document.createElement('span');
     chip.className = 'tag';
@@ -388,13 +402,13 @@
     chip.querySelector('button').addEventListener('click', function () {
       it.picked = false;
       tags.removeChild(chip);
-      if (!tags.children.length) tags.hidden = true;
       q.focus();
+      syncTray();
       render();
       live.textContent = '已移除 ' + it.cn + '。';
     });
     tags.appendChild(chip);
-    tags.hidden = false;
+    syncTray();
   }
 
   /* ---------------- 键盘：只在必须接管的方向上 preventDefault ---------------- */
@@ -468,7 +482,7 @@
     q.value = ''; act = -1; sel = null;
     DATA.forEach(function (d) { d.picked = false; });
     tags.innerHTML = '';
-    tags.hidden = !multi;
+    syncTray();
     /* 多选要让读屏器知道这不是"选一个就完事"的 listbox */
     if (multi) pop.setAttribute('aria-multiselectable', 'true');
     else pop.removeAttribute('aria-multiselectable');

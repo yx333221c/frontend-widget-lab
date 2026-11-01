@@ -50,7 +50,7 @@
   /* ============ 牌堆 ============ */
   .deck {
     position: relative;
-    height: 216px;
+    height: 222px;
     touch-action: none;                 /* 关键：否则手指横拖会被当成滚动吃掉 */
     user-select: none; -webkit-user-select: none;
     outline: none;
@@ -67,8 +67,11 @@
     background:
       linear-gradient(180deg, rgba(255,255,255,.07), rgba(255,255,255,.02)), #161b28;
     box-shadow: 0 14px 30px -18px rgba(0,0,0,.9);
-    /* --i = 在堆里的层序，只由 render() 改；层间错位用 transform 表达 */
-    transform: translateY(calc(var(--i, 0) * 4px)) scale(calc(1 - var(--i, 0) * .045));
+    /* --i = 在堆里的层序，只由 render() 改；层间错位用 transform 表达。
+       scale 以中心为原点，每缩 3% 就把这张卡的下边缘往上收 ~2.9px（196×0.03÷2），
+       所以 translateY 步长必须明显大于它，下面那张才露得出来。
+       原来写 4px + .045 时露出量是负的，整张被前一张盖住，根本看不出是个堆。 */
+    transform: translateY(calc(var(--i, 0) * 7px)) scale(calc(1 - var(--i, 0) * .03));
     z-index: calc(30 - var(--i, 0));
     transition: transform .4s cubic-bezier(.2, .8, .25, 1);
     will-change: transform;
@@ -376,7 +379,7 @@
       el.style.opacity = '';
     }
     el.addEventListener('transitionend', settle);
-    setTimeout(settle, 900);   /* reduced-motion 下过渡极短，兜底保证一定收尾 */
+    setTimeout(settle, 900);   /* 过渡没能真正跑起来就没有 transitionend，定时器兜底 */
   }
 
   /* ---------- 键盘与按钮翻卡 ---------- */

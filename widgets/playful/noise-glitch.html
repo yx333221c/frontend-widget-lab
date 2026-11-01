@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>故障风文字抖动 · Widget Lab</title>
+<style>
+  :root {
+    --accent: #24d3ee;
+    --ink: #e9edf6;
+    --dim: #8695b4;
+    --amp: 6;          /* 最大位移量（px），由强度滑杆写进来 */
+    --band: 28%;       /* 撕裂横条的高度 */
+    --grain: .5;       /* 噪点层不透明度 */
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 22px 20px;
+    background:
+      radial-gradient(120% 110% at 10% -20%, #14252e 0%, transparent 60%),
+      radial-gradient(90% 90% at 100% 120%, #1c1630 0%, transparent 55%),
+      #0e1119;
+    color: var(--ink);
+    font: 14px/1.5 system-ui, "PingFang SC", "Microsoft YaHei", sans-serif;
+  }
+  h2 { margin: 0 0 2px; font-size: 15px; line-height: 1.3; letter-spacing: -.2px; }
+  p.note { margin: 0 0 10px; color: var(--dim); font-size: 12.5px; }
+
+  /* ============ 演示区 ============ */
+  .stage {
+    position: relative; height: 84px; overflow: hidden;
+    display: grid; place-items: center;
+    border-radius: 12px; cursor: pointer;
+    background:
+      repeating-linear-gradient(180deg, rgba(255,255,255,.022) 0 2px, transparent 2px 4px),
+      rgba(255, 255, 255, .03);
+    border: 1px solid rgba(255, 255, 255, .1);
+  }
+
+  /* 同一段文字叠三层：主层（白）+ 青 + 品红 */
+  .glitch {
+    position: relative;
+    isolation: isolate;            /* 把 screen 混合限制在这一块内，见教学 §4 */
+    font: 800 34px/1 ui-monospace, "Cascadia Code", Consolas, monospace;
+    letter-spacing: 1px;
+    color: var(--ink);
+    white-space: nowrap;
+  }
+  .glitch::before,
+  .glitch::after {
+    content: attr(data-text);      /* attr() 只在 content 里有效 */
+    position: absolute; left: 0; top: 0;
+    white-space: nowrap;
+    pointer-events: none;
+    mix-blend-mode: screen;        /* 叠加混色，而不是盖住主体 */
+    opacity: 0;                    /* 静止态：错位层完全不参与 */
+  }
+  .glitch::before { color: var(--accent); }
+  .glitch::after { color: #ff5f9e; }
+
+  /* 只有 run 态（常驻 / hover 命中 / 爆发中）才挂动画 */
+  .glitch.run::before,
+  .glitch.run::after { opacity: 1; }
+  .glitch.run::before { animation: gl-shift 1.4s steps(4, end) infinite alternate; }
+  .glitch.run::after {
+    animation: gl-shift 1.1s steps(3, end) infinite alternate-reverse,
+               gl-tear 2s linear infinite;
+  }
+
+  /* 位移层：steps(4) 把每个关键帧区间再切成 4 个离散采样，所以是"跳"不是"糊" */
+  @keyframes gl-shift {
+    0%   { transform: translate3d(calc(var(--amp) * -1px), 0, 0); }
+    25%  { transform: translate3d(calc(var(--amp) * 1px), calc(var(--amp) * .25px), 0); }
+    50%  { transform: translate3d(calc(var(--amp) * -.4px), calc(var(--amp) * -.25px), 0); }
+    75%  { transform: translate3d(calc(var(--amp) * 1.6px), 0, 0); }
+    100% { transform: translate3d(calc(var(--amp) * -1.6px), calc(var(--amp) * .2px), 0); }
+  }
+
+  /* 撕裂层：同一个状态写两个几乎相邻的关键帧（0% 与 6% 同值），
+     浏览器在 0→6% 之间只能插出"不变"，真正的跳变被挤进 6%→6.6% 这 12ms。 */
+  @keyframes gl-tear {
+    0%, 6%      { clip-path: inset(10% 0 calc(100% - 10% - var(--band)) 0); }
+    6.6%, 16%   { clip-path: inset(64% 0 calc(100% - 64% - var(--band)) 0); }
+    16.6%, 28%  { clip-path: inset(38% 0 calc(100% - 38% - var(--band)) 0); }
+    28.6%, 44%  { clip-path: inset(80% 0 calc(100% - 80% - var(--band)) 0); }
+    44.6%, 52%  { clip-path: inset(22% 0 calc(100% - 22% - var(--band)) 0); }
+    52.6%, 70%  { clip-path: inset(52% 0 calc(100% - 52% - var(--band)) 0); }
+    70.6%, 84%  { clip-path: inset(4% 0 calc(100% - 4% - var(--band)) 0); }
+    84.6%, 100% { clip-path: inset(72% 0 calc(100% - 72% - var(--band)) 0); }
+  }
+
+  /* 噪点层：整块内联 SVG 滤镜，seed 由 rAF 离散地改 */
+  .grain {
+    position: absolute; inset: 0; width: 100%; height: 100%;
+    opacity: 0; mix-blend-mode: screen; pointer-events: none;
+  }
+  .glitch.run ~ .grain { opacity: var(--grain); }
+
+  .hud {
+    position: absolute; left: 10px; bottom: 6px;
+    font: 11px/1.4 ui-monospace, Consolas, monospace; color: var(--dim);
+    pointer-events: none;
+  }
+  .hud b { color: var(--accent); font-weight: 600; }
+
+  /* ============ 控制面板 ============ */
+  .panel {
+    margin-top: 9px; padding: 8px 12px; border-radius: 12px;
+    background: rgba(255, 255, 255, .04); border: 1px solid rgba(255, 255, 255, .1);
+    display: flex; flex-wrap: wrap; gap: 7px 14px; align-items: center;
+    font-size: 12px; color: #a9b6d1;
+  }
+  .panel label { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+  .panel input[type="text"] {
+    width: 132px; padding: 4px 8px; border-radius: 7px;
+    border: 1px solid rgba(255, 255, 255, .14);
+    background: rgba(0, 0, 0, .3); color: var(--ink); font: 12px/1.3 inherit;
+  }
+  .panel input[type="text"]:focus { outline: none; border-color: var(--accent); }
+  .panel input[type="range"] { width: 84px; accent-color: var(--accent); }
+  .panel output { font: 11px/1 ui-monospace, Consolas, monospace; color: var(--ink); min-width: 22px; }
+  .seg { display: inline-flex; border: 1px solid rgba(255, 255, 255, .12); border-radius: 8px; overflow: hidden; }
+  .seg button {
+    padding: 4px 10px; font: 12px/1.4 system-ui, sans-serif; cursor: pointer;
+    color: #a9b6d1; background: transparent; border: 0; border-right: 1px solid rgba(255, 255, 255, .1);
+  }
+  .seg button:last-child { border-right: 0; }
+  .seg button[aria-pressed="true"] { background: rgba(36, 211, 238, .16); color: var(--accent); font-weight: 650; }
+  .chk { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+  .chk input { accent-color: var(--accent); }
+  p.hint { margin: 7px 0 0; color: #6c7893; font-size: 11.5px; }
+  code { font: 11.5px ui-monospace, Consolas, monospace; color: #b8c6e6; }
+
+  /* 静止开关：JS 会摘掉 run 并停 rAF，这里兜住"动画根本不存在" */
+  body.still .glitch::before,
+  body.still .glitch::after { animation: none; opacity: 0; }
+  body.still .grain { opacity: 0; }
+
+  /* 系统减少动效：完全静止，一个像素都不动 */
+  @media (prefers-reduced-motion: reduce) {
+    .glitch::before, .glitch::after { animation: none !important; opacity: 0 !important; }
+    .grain { opacity: 0 !important; }
+  }
+</style>
+</head>
+<body>
+  <h2>故障风文字抖动 Noise Glitch</h2>
+  <p class="note">默认只在指针移到字上时发作（常驻抖动很吵）；切到「点一次」可以只爆发一下。</p>
+
+  <div class="stage" id="stage">
+    <div class="glitch" id="g" data-text="SYSTEM ERROR">SYSTEM ERROR</div>
+    <svg class="grain" aria-hidden="true">
+      <filter id="glitchGrain" x="0" y="0" width="100%" height="100%">
+        <feTurbulence id="turb" type="fractalNoise" baseFrequency="0.92" numOctaves="2" seed="0" stitchTiles="stitch"/>
+        <feColorMatrix type="saturate" values="0"/>
+        <feComponentTransfer>
+          <feFuncA type="linear" slope="0.55" intercept="0"/>
+        </feComponentTransfer>
+      </filter>
+      <rect width="100%" height="100%" filter="url(#glitchGrain)"/>
+    </svg>
+    <div class="hud" id="hud">rAF <b>停</b> · seed <b>0</b></div>
+  </div>
+
+  <div class="panel">
+    <label>文字
+      <input type="text" id="tText" maxlength="18" value="SYSTEM ERROR" aria-label="故障文字内容">
+    </label>
+    <label>强度
+      <input type="range" id="sAmp" min="0" max="16" step="1" value="6" aria-label="故障强度">
+      <output id="oAmp">6</output>
+    </label>
+    <span class="seg" role="group" aria-label="触发模式">
+      <button type="button" id="mHover" aria-pressed="true">hover</button>
+      <button type="button" id="mAlways" aria-pressed="false">常驻</button>
+      <button type="button" id="mClick" aria-pressed="false">点一次</button>
+    </span>
+    <label class="chk"><input type="checkbox" id="cStill"> 静止（全停）</label>
+  </div>
+  <p class="hint">强度调到 <code>0</code> 只剩两层错色没有撕裂；<code>16</code> 时横条会跳出字面。边界值是用来暴露参数的，不是用来调效果的。</p>
+
+<script>
+(function () {
+  'use strict';
+
+  var g = document.getElementById('g');
+  var stage = document.getElementById('stage');
+  var hud = document.getElementById('hud');
+  var turb = document.getElementById('turb');
+  var root = document.documentElement;
+
+  var MODE = 'hover';            // hover | always | click
+  var still = false;
+  var hovering = false;          // 指针是否在字上（触屏用按下代替）
+  var burstUntil = 0;
+
+  /* 噪点层的 seed 由这一个 rAF 驱动：所有层共用同一个时钟，静止时一起停。
+     SMIL 的 <animate> 也能离散，但它不归我们的循环管，暂停要另写一套。 */
+  var raf = null, last = 0, acc = 0, seed = 0;
+  function loop(t) {
+    var ms = last ? Math.min(t - last, 40) : 16.7;   // 夹住一帧：切后台回来不跳一大步
+    last = t;
+    acc += ms;
+    while (acc > 70) { acc -= 70; seed = (seed + 1) % 1000; turb.setAttribute('seed', seed); }
+    if (active()) raf = requestAnimationFrame(loop);
+    else { raf = null; last = 0; show(); }
+  }
+  function kick() { if (!raf && active()) { last = 0; raf = requestAnimationFrame(loop); } }
+
+  /* 该不该动，只看这一个函数；DOM 类名是它的结果，不是它的输入 */
+  function active() {
+    if (still) return false;
+    if (MODE === 'always') return true;
+    if (MODE === 'click') return performance.now() < burstUntil;
+    return hovering;
+  }
+  function apply() {
+    var on = active();
+    g.classList.toggle('run', on);
+    if (on) kick();
+    else if (raf) { cancelAnimationFrame(raf); raf = null; last = 0; }
+    show();                              // 状态写完再刷新指示器，否则报的是上一帧
+  }
+  function show() {
+    hud.innerHTML = 'rAF <b>' + (raf ? '跑' : '停') + '</b> · seed <b>' + seed + '</b>';
+  }
+
+  /* ---------- 文字：DOM 与 data-text 必须一起改 ---------- */
+  var box = document.getElementById('tText');
+  function sync() {
+    var v = box.value || ' ';
+    g.textContent = v;
+    g.setAttribute('data-text', v);   // 伪元素 content 从这份取
+  }
+  box.addEventListener('input', sync);
+
+  /* ---------- 强度：位移、横条厚度、噪点浓度一起动 ---------- */
+  var amp = document.getElementById('sAmp');
+  amp.addEventListener('input', function () {
+    var v = parseFloat(amp.value);
+    document.getElementById('oAmp').textContent = amp.value;
+    root.style.setProperty('--amp', v);
+    root.style.setProperty('--band', (34 - v) + '%');   // 越强横条越薄，看起来切片更多
+    root.style.setProperty('--grain', (0.18 + v / 26).toFixed(3));
+    kick();
+  });
+
+  /* ---------- 触发模式 ---------- */
+  var segs = { hover: document.getElementById('mHover'), always: document.getElementById('mAlways'), click: document.getElementById('mClick') };
+  Object.keys(segs).forEach(function (k) {
+    segs[k].addEventListener('click', function () {
+      MODE = k;
+      Object.keys(segs).forEach(function (j) { segs[j].setAttribute('aria-pressed', String(j === k)); });
+      if (k === 'click') burstUntil = 0;
+      apply();
+    });
+  });
+
+  /* hover 模式：桌面用进出，触屏没有 hover，按下当命中、抬起即结束 */
+  g.addEventListener('pointerenter', function (e) {
+    if (e.pointerType !== 'touch') { hovering = true; apply(); }
+  });
+  g.addEventListener('pointerleave', function () { hovering = false; apply(); });
+  stage.addEventListener('pointerdown', function () {
+    if (MODE === 'click') { burstUntil = performance.now() + 900; apply(); setTimeout(apply, 950); }
+    else if (MODE === 'hover') { hovering = true; apply(); }
+  });
+  stage.addEventListener('pointerup', function () { hovering = false; apply(); });
+
+  /* ---------- 静止开关：等同于 prefers-reduced-motion 的降级路径 ---------- */
+  var stillBox = document.getElementById('cStill');
+  stillBox.addEventListener('change', function () {
+    still = stillBox.checked;
+    document.body.classList.toggle('still', still);
+    apply();
+  });
+  if (window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    stillBox.checked = true;
+    stillBox.dispatchEvent(new Event('change'));
+  }
+
+  sync();
+  apply();
+})();
+</script>
+</body>
+</html>

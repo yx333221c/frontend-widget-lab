@@ -35,10 +35,10 @@
 ## 1. 状态只有一个来源：`aria-checked`
 
 ```css
-.sw[aria-checked="true"] .sky { opacity: 1; }
-.sw[aria-checked="true"] .star { opacity: .92; transform: none; }
-.sw[aria-checked="true"] .knob { transform: translate3d(1.2em, 0, 0); }
+  .sw[aria-checked="true"] .sky { opacity: 1; }
 ```
+
+星星、拇指、遮罩圆都跟着这个套路，见第 3 节的完整规则。
 
 JS 里只改一个属性，剩下的都是 CSS 的事：
 
@@ -55,8 +55,16 @@ sw.addEventListener('click', function () {
 尺寸全用 `em`，外层只改 `font-size`：
 
 ```css
-.sw { font-size: calc(44px * var(--scale, 1)); width: 2.2em; height: 1em; }
-.knob { width: .84em; height: .84em; left: .08em; }
+  .sw {
+    position: relative; flex: none;
+    font-size: calc(44px * var(--scale, 1));
+    width: 2.2em; height: 1em;
+```
+
+```css
+  .knob {
+    position: absolute; top: 50%; left: .08em; margin-top: -.42em;
+    width: .84em; height: .84em; border-radius: 50%; overflow: hidden;
 ```
 
 这样控制面板里的尺寸滑杆推一个变量就够，拇指位移、星星大小、光晕半径按比例一起走，不会缩放后走形。
@@ -66,8 +74,15 @@ sw.addEventListener('click', function () {
 `linear-gradient` 之间不能插值，写 `transition: background` 换来的是瞬间跳色。所以夜空是一层独立的纯色板，靠 `opacity` 叠上去：
 
 ```css
-.sky { position: absolute; inset: 0; background: var(--night); opacity: 0; transition: opacity var(--dur) linear; }
-.sw[aria-checked="true"] .sky { opacity: 1; }
+  .sky {
+    position: absolute; inset: 0; border-radius: inherit;
+    background: var(--night);
+    opacity: 0; transition: opacity var(--dur) linear;
+  }
+```
+
+```css
+  .sw[aria-checked="true"] .sky { opacity: 1; }
 ```
 
 `--night` 必须是纯色，而且月亮停进去那一侧的底色要和它完全一致，否则遮罩圆会露出一个亮边的方块。这就是 `.sky::before` 的蓝色光晕只铺左半边、`width: 62%` 的原因：右侧留给纯色。
@@ -79,27 +94,32 @@ sw.addEventListener('click', function () {
 这是整个组件最有用的一招。想要的编排是：开灯→关灯时星星先灭、月亮再退；关灯→开灯时轨道先暗、星星依次出、月亮最后到。两种方向的节奏不一样，所以延迟不能写在基类上。
 
 ```css
-.star {
-  transition: opacity calc(var(--dur) * .8) linear,
-              transform calc(var(--dur) * .8) cubic-bezier(.2, .8, .25, 1);
-}
-.sw[aria-checked="true"] .star {
-  opacity: .92; transform: none;
-  /* 分向不对称的关键：延迟只写在"开"这一侧，关的时候基类生效，星星立刻消失 */
-  transition-delay: calc(var(--st) * var(--i, 0) * var(--dur) * .18);
-}
+  .sw[aria-checked="true"] .star {
+    opacity: .92; transform: none;
+    /* 分向不对称的关键：延迟只写在"开"这一侧，关的时候基类生效，星星立刻消失 */
+    transition-delay: calc(var(--st) * var(--i, 0) * var(--dur) * .1);
+  }
 ```
 
 `transition-delay` 生效的是**目标状态**那一侧的规则。关到 `opacity:0` 时读的是基类（没有延迟），所以星星是齐刷刷灭掉；开到 `opacity:.92` 时读的是属性选择器那条，五颗星按各自的 `--i` 依次亮起。写成基类延迟的话，关灯也要等一颗星，看着像卡住。
 
-`--i` 直接写在 HTML 里：`<span class="star" style="--i:2">`。它是无单位数字，配合 `calc` 乘出毫秒。
+`--i` 直接写在 HTML 里：`<span class="star" style="left:49%; top:34%; --i:2">`。它是无单位数字，配合 `calc` 乘出延迟。`--i` 从 0 排到 4，系数取 `.1`，于是最后一颗星比第一颗晚 `0.4` 个 `--dur` 起步。
 
 月亮和遮罩圆的延迟同理，都挂在"开"这一侧，让它排在星星之后：
 
 ```css
-.sw[aria-checked="true"] .knob { transition-delay: calc(var(--st) * var(--dur) * .34); }
-.sw[aria-checked="true"] .knob::after { transition-delay: calc(var(--st) * var(--dur) * .34); }
+  .sw[aria-checked="true"] .knob {
+    transform: translate3d(1.2em, 0, 0);
+    box-shadow: 0 0 .14em rgba(160, 190, 255, .28), inset 0 0 .1em rgba(255, 255, 255, .1);
+    transition-delay: calc(var(--st) * var(--dur) * .5);   /* 月亮后进：星星已经全部起步 */
+  }
+  .sw[aria-checked="true"] .knob::after {
+    transform: translate3d(0, 0, 0);
+    transition-delay: calc(var(--st) * var(--dur) * .5);
+  }
 ```
+
+`0.5` 比 `0.4` 大，所以月亮在最后一颗星之后才起步——"星星先出、月亮后进"的顺序是靠这两个系数撑住的。一开始这里写的是 `.34`，月亮会赶在第三、四颗星之前动，编排就散了；三个档位的时长（150 / 300 / 600）都会等比例放大这个错位。
 
 控制面板里的"禁用错峰"就是把 `--st` 设成 0：所有延迟归零，编排塌成一次同时的跳变。这个对比开关建议你亲手拨一下，它比任何描述都直观：动效"高级"与否，多数时候来自错峰，而不是时长。
 

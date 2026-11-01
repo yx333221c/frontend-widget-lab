@@ -59,9 +59,10 @@
     mask-image: linear-gradient(90deg, #000 0 40%, rgba(0,0,0,0) 55%);
     -webkit-mask-size: 250% 100%; mask-size: 250% 100%;
     -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
-    -webkit-mask-position: 100% 0; mask-position: 100% 0;   /* 默认整条藏起来 */
-    opacity: 0;
+    -webkit-mask-position: 100% 0; mask-position: 100% 0;   /* 默认整条被遮罩藏住 */
   }
+  /* 隐藏靠 mask-position，不靠 opacity：wipe 只动画 mask-position，
+     若这里再叠 opacity: 0，动画不会把它抬起来，标题会永远不可见 */
 
   /* ============ 入场元素 ============ */
   .card {

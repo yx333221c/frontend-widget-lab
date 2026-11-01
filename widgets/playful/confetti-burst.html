@@ -244,7 +244,7 @@
     if (ms > 0) fps += (1000 / ms - fps) * 0.12;
     showMeter();
     if (parts.length && !CFG.still) raf = requestAnimationFrame(frame);
-    else { raf = null; last = 0; showMeter(); }   // 粒子清空 -> rAF 必须停
+    else { raf = null; last = 0; fps = 0; showMeter(); }   // 粒子清空 -> rAF 停，读数归零
   }
   function wake() {
     if (CFG.still) { parts.length = 0; showMeter(); clearCanvas(); return; }

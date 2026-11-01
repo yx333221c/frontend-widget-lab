@@ -112,7 +112,7 @@
 </head>
 <body>
   <h2>液态黏粘菜单 Gooey Menu</h2>
-  <p class="note">点中间的圆钮展开。指针停在某个子项上，它会往外顶，相邻两项被拖着跟过去，之间拉出黏丝。</p>
+  <p class="note">点中间的圆钮展开。指针停在某个子项上，它会往圆心压，相邻两项被拖着跟过去，之间拉出黏丝。</p>
 
   <div class="stage" id="stage">
     <div class="goo" aria-hidden="true">
@@ -126,7 +126,7 @@
     <div class="glyphs" id="glyphs" aria-hidden="true"><span class="g fab" id="fabG">＋</span></div>
     <div class="hit" id="hit"></div>
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
-    <span class="tag" id="tag">σ 10 · 连住上限约 13.5px</span>
+    <span class="tag" id="tag">σ 10 · 阈值 alpha 0.50</span>
   </div>
 
   <div class="panel">
@@ -141,7 +141,7 @@
     </label>
     <label class="grp"><input type="checkbox" id="cOff"> 关掉滤镜看真相</label>
   </div>
-  <p class="hint">模糊拉到 0，两个圆只是相碰；拉到 16，整坨糊成一团。黏丝只在中间那几档出现。最后一项勾上能看到层是分开的。</p>
+  <p class="hint">模糊 3 以上，悬停才拉得出丝。σ 再往上丝变粗，代价是圆本身被啃小。勾最后一项能看出形状和图标是两层。</p>
 
   <!-- 滤镜定义要留在 DOM 里，filter: url(#goo) 才解析得到 -->
   <svg width="0" height="0" aria-hidden="true" style="position:absolute">
@@ -164,8 +164,8 @@
   var R = 84;                  // 子项落位半径
   var DUR = 460, STEP = 55;    // 单项时长与逐位错峰
   var PULL_R = 58;             // 判定"悬停在哪颗"的距离
-  var POP = 14;                // 被指的那颗往外顶多少
-  var DRAG = 10;               // 邻居被拖着跟过去多少
+  var PRESS = 18;              // 被指的那颗往圆心压多少
+  var DRAG = 14;               // 邻居被拖着跟过去多少
   var K = 0.8;                 // 扯动强度，面板可调
   var open = false, startAt = 0, animUntil = 0, raf = null;
   var reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -237,8 +237,8 @@
       if (h < 0 || !open) { q.tx = 0; q.ty = 0; continue; }
       var s = 1 - hd / PULL_R; s = s * s;            // 平方衰减，影响圈边界不突跳
       if (k === h) {
-        q.tx = q.ux * POP * s * K;                   // 被指的沿半径往外顶
-        q.ty = q.uy * POP * s * K;
+        q.tx = -q.ux * PRESS * s * K;                // 被指的沿半径往圆心压
+        q.ty = -q.uy * PRESS * s * K;
       } else {
         var step = Math.abs(k - h);                  // 隔得越远被带得越少
         if (step > 2) { q.tx = 0; q.ty = 0; continue; }

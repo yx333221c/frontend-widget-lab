@@ -21,21 +21,26 @@
 ## 1. 结构：一个 input 铺满整条格子
 
 ```html
-<div class="otp">
-  <div class="cells" aria-hidden="true"></div>
-  <input class="layer" inputmode="numeric" autocomplete="one-time-code"
-         pattern="[0-9]{6}" maxlength="6" aria-label="6 位验证码">
-</div>
+  <div class="otp" id="otp">
+    <!-- 视觉层：6 个格子，全部 aria-hidden，读屏器只会念下面那一个 input -->
+    <div class="cells" id="cells" aria-hidden="true"></div>
+    <!-- 交互层：唯一的事实来源 -->
+    <input class="layer" id="code" type="text" inputmode="numeric" autocomplete="one-time-code"
+           pattern="[0-9]{6}" maxlength="6" aria-label="6 位验证码" aria-describedby="status"
+           spellcheck="false" autocapitalize="off">
+  </div>
 ```
 
 ```css
-.otp { position: relative; display: inline-block; }
-.layer {
-  position: absolute; left: 0; top: 0; z-index: 2;
-  width: 100%; height: 100%;
-  letter-spacing: 24px;
-  opacity: 0;
-}
+  .otp { position: relative; display: inline-block; }
+  .layer {
+    position: absolute; left: 0; top: 0; z-index: 2;
+    width: 100%; height: 100%;
+    letter-spacing: 24px;          /* 撑开原生光标间距，选区也不会糊成一团 */
+    opacity: 0;                    /* 不能 display:none / visibility:hidden：元素不渲染就没有粘贴、IME、autofill */
+    caret-color: transparent;
+    outline: none;
+  }
 ```
 
 关键是 `opacity: 0`，不是 `display: none` 也不是 `visibility: hidden`。元素必须真的被渲染，交互才成立：隐藏的 input 不参与布局，粘贴没有落点，输入法候选窗不知道往哪贴，自动填充也不会命中它。`opacity:0` 只关掉视觉，焦点、选区、组合输入、`setSelectionRange` 都照常工作。

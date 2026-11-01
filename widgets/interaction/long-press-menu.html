@@ -270,8 +270,8 @@
 
   grid.addEventListener('pointermove', function (e) {
     if (!press || e.pointerId !== press.id) return;
-    /* 必须监听 move 并取消：不监听的话，长按拖动会选中文字、
-       或者手指滑到别的图块上还把菜单弹在原来那块，位置全错。 */
+    /* 必须监听 move 并取消：不监听的话，手指滑到别的图块上
+       还会把菜单弹在原来那一块，"按住不动"和"按住后拖"也分不开。 */
     if (Math.abs(e.clientX - press.x0) > CFG.tol || Math.abs(e.clientY - press.y0) > CFG.tol) {
       cancel();
     }
