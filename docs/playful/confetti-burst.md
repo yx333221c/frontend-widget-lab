@@ -162,8 +162,8 @@ function burst(x, y, n, soft) {
 ## 6. 循环的启停：结束后 `rAF` 必须停
 
 ```js
-if (parts.length && !CFG.still) raf = requestAnimationFrame(frame);
-else { raf = null; last = 0; showMeter(); }   // 粒子清空 -> rAF 必须停
+    if (parts.length && !CFG.still) raf = requestAnimationFrame(frame);
+    else { raf = null; last = 0; fps = 0; showMeter(); }   // 粒子清空 -> rAF 停，读数归零
 ```
 
 `requestAnimationFrame` 是自我续命的：只要排了下一帧，浏览器就得一直唤醒你，哪怕画面上什么都没有。本站的组件常驻在详情页 iframe 里，一个空转的循环会让页面一直不安静。规则是：`wake()` 在有事件时唤醒，循环发现没粒子就断掉。同理，自动爆发用 `setTimeout` 排，而不是让 rAF 空转等下一波，定时器不会唤醒渲染管线。

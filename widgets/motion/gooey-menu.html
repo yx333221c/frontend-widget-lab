@@ -10,7 +10,7 @@
     --ink: #e9edf6;
     --accent: #ff5f9e;
     --cx: 160px;   /* FAB 圆心，JS 里的 CX/CY 必须与之一致 */
-    --cy: 150px;
+    --cy: 136px;
   }
   * { box-sizing: border-box; }
   body {
@@ -31,7 +31,7 @@
      这里的底色是 rgba(255,255,255,.03)，套进去就整片消失。 */
   .stage {
     position: relative;
-    width: 320px; height: 220px;
+    width: 320px; height: 200px;
     border-radius: 14px;
     background: rgba(255, 255, 255, .03);
     border: 1px solid rgba(255, 255, 255, .1);
@@ -160,7 +160,7 @@
 (function () {
   'use strict';
 
-  var CX = 160, CY = 150;      // FAB 圆心，和 CSS 的 --cx/--cy 对齐
+  var CX = 160, CY = 136;      // FAB 圆心，和 CSS 的 --cx/--cy 对齐
   var R = 84;                  // 子项落位半径
   var DUR = 460, STEP = 55;    // 单项时长与逐位错峰
   var PULL_R = 58;             // 判定"悬停在哪颗"的距离

@@ -40,8 +40,13 @@ track.addEventListener('pointermove', function (e) {
   -webkit-appearance: none; appearance: none;
   background: transparent; outline: none; cursor: ew-resize;
 }
-.rng::-webkit-slider-runnable-track { height: var(--th); border-radius: 999px; }
-.rng::-moz-range-track { height: var(--th); border-radius: 999px; background: var(--track); }
+.rng::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: var(--thumb); height: var(--thumb);
+  margin-top: -7px;                    /* (6 - 20) / 2：runnable-track 不会自动居中 */
+}
+.rng::-moz-range-thumb {
+  appearance: none;
 ```
 
 三处必须同时写、少一处就出问题的地方：

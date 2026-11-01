@@ -164,6 +164,8 @@ el.addEventListener('pointerleave', function () { el.classList.remove('on'); });
 
 触屏没有可靠的 `:hover`，靠 enter/leave 加类，按住时亮、抬起淡出。`pointerenter` 里顺手播一次坐标，是为了避免第一帧从上一张卡片的位置瞬移过来。
 
+这个对照是给鼠标环境设计的：触屏上第三张会一直亮着（`.raw` 直接写死 `opacity: 1`，与 `.on` 无关），看到的是"常驻"而不是"离开后残留"。
+
 ---
 
 ## 6. 可访问性与降级

@@ -98,8 +98,12 @@ input.addEventListener('keydown', function (e) {
   } else if (e.key === 'Delete' && s === e2 && s < v.length) {
     e.preventDefault();
     setValue(spliceOut(v, s)); setSel(s); paint();
-  } else if (e.key === 'Enter') { /* 满位就提交，否则播报还差几位 */ }
-  else if (e.key === 'Escape') { clearAll(); }
+  } else if (e.key === 'Enter') {
+    e.preventDefault();
+    if (v.length === N) verify(); else say('还差 ' + (N - v.length) + ' 位。');
+  } else if (e.key === 'Escape') {
+    e.preventDefault(); clearAll();
+  }
   /* 方向键 / Home / End 完全不拦：原生按字符移动光标，落点正好是格序 */
 });
 ```
@@ -144,10 +148,14 @@ input.addEventListener('input', function () {
 function verify() {
   stop();
   otp.classList.remove('ok', 'bad');
+  say('校验中…');
   t1 = setTimeout(function () {
-    if (input.value === code()) { otp.classList.add('ok'); }
-    else {
+    if (input.value === code()) {
+      otp.classList.add('ok');
+      say('✓ 校验通过（正确码 ' + code() + '）');
+    } else {
       otp.classList.add('bad');
+      say('✕ 验证码不正确，抖动结束后自动清空');
       t2 = setTimeout(clearAll, reduce ? 0 : 620);
     }
   }, 300);

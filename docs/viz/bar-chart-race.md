@@ -16,9 +16,9 @@ plot.innerHTML = '';
 rows.forEach(r => plot.appendChild(r.el));
 ```
 
-它确实"对"，问题有三个。位置是瞬移的：上一帧 React 在第 5 行，这一帧在第 1 行，人眼追不到中间过程，只能重新读名字来确认发生了什么；条形长度的变化也一起消失，观感像幻灯片翻页；而一旦你想改成"每根柱子一个 `position:absolute` 加 `top`"，就会撞上布局重排和 `top` 进不了合成层这两个新问题，代码反而更长。
+它确实"对"，问题有三个。位置是瞬移的：上一帧 React 在第 5 行，这一帧在第 1 行，人眼追不到中间过程，只能重新读名字来确认发生了什么；条形长度的变化也一起消失，观感像幻灯片翻页；而一旦想改成"每根柱子 `position:absolute` 加 `top`"，就会撞上布局重排和 `top` 进不了合成层这两个新问题，代码反而更长。
 
-竞赛图的正确心智模型是：**位置变化是一次布局跳变，动画要"事后补"**。先让 DOM 跳到最终位置，再把元素反向推回起点，然后播放回零。这套做法叫 FLIP，它是这类组件唯一的难点。
+竞赛图的正确心智模型是：**位置变化是一次布局跳变，动画要"事后补"**。先让 DOM 跳到最终位置，再把元素反向推回起点，然后播放回零。这套做法叫 FLIP。
 
 ---
 
@@ -77,16 +77,11 @@ order.forEach(function (r) { plot.appendChild(r.el); });
 完整代码就是 `setFrame()` 里这一段，顺序不能调。
 
 ```js
-    /* ① First —— 先记下每行此刻在屏幕上的真实 top。
-       必须用 getBoundingClientRect：它包含"上一段还没播完的过渡"，
-       所以动画中途插进新一帧也不会跳回起点。 */
     rows.forEach(function (r) { r.first = r.el.getBoundingClientRect().top; });
 
     /* ② 改数据 + 重排 DOM。做完这一步，布局里才存在新的位置（Last）。 */
     order.forEach(function (r) { plot.appendChild(r.el); });
 
-    /* ③ Last —— 再读一次 rect。这次读取本身就会触发 reflow，
-       不读的话浏览器不会告诉你新位置，Invert 的量就算不出来。 */
     rows.forEach(function (r) { r.last = r.el.getBoundingClientRect().top; });
 
     /* ④ Invert —— 关掉过渡，把每行用 transform 反向推回 First 的位置。 */
@@ -95,9 +90,6 @@ order.forEach(function (r) { plot.appendChild(r.el); });
       r.el.style.transform = 'translateY(' + (r.first - r.last).toFixed(2) + 'px)';
     });
 
-    /* ⑤ 强制一次布局：把上面这批 transform 提交掉，
-       否则它会和下面"translateY(0)"被合并成一次样式更新，动画直接消失。
-       读一个和样式无关的布局属性即可，offsetHeight 最便宜。 */
     void plot.offsetHeight;
 
     /* ⑥ Play —— 把 transform 收回 0，交还给 transition 播放。 */
@@ -107,19 +99,21 @@ order.forEach(function (r) { plot.appendChild(r.el); });
     });
 ```
 
-关键在第 ⑤ 步。**如果不在 Play 之前强制一次布局，Invert 和 Play 两次赋值会被合并成一次样式更新**：浏览器只看到"transform 从旧值变成 0"，中间那个反向位移根本不存在，动画直接消失，效果退化成瞬移。读 `offsetHeight`、`getBoundingClientRect()`、或者调 `getComputedStyle()` 都能触发这次提交，`offsetHeight` 最便宜，因为它不参与绘制。
+① 是"记下每行此刻在屏幕上的真实 top"，③ 是"再读一次 rect"，⑤ 是强制布局提交。三处都有注释在源码里，这里省掉是为了不让代码块比正文还长。
 
-第 ① 步和第 ③ 步的 `getBoundingClientRect()` 也不是装饰。它是同步布局读取：调用时浏览器必须先把待处理的样式和布局算完，才能返回真实像素位置。所以第 ③ 步那次读取本身就让重排后的新布局落了地，`Last` 才是可信的。跳过它去读"数据里认为的位置"，你就得自己算行高、间距、当前名次，一个都错不得。
+关键在第 ⑤ 步。**不在 Play 之前强制一次布局，Invert 和 Play 两次赋值会被合并成一次样式更新**：浏览器只看到"transform 从旧值变成 0"，中间那个反向位移根本不存在。读 `offsetHeight`、`getBoundingClientRect()` 或 `getComputedStyle()` 都能触发这次提交，`offsetHeight` 最便宜，因为它不参与绘制。
 
-> 坑：症状是柱子换位时先"闪回起点再冲出去"，或者整段动画时有时无。原因是漏了第 ⑤ 步的强制布局。修法就是把 `void plot.offsetHeight;` 放在 Invert 循环和 Play 循环之间，一行都不能挪。
+第 ① 步的 rect 读取也是同步布局读取：调用时浏览器必须先把待处理样式和布局算完，才能返回真实像素位置。跳过它去读"数据里认为的位置"，你就得自己算行高、间距、当前名次，一个都错不得。
+
+> 坑：症状是柱子换位时先"闪回起点再冲出去"，或者整段动画时有时无。原因是漏了第 ⑤ 步。修法就是把 `void plot.offsetHeight;` 放在 Invert 循环和 Play 循环之间，一行都不能挪。
 
 ---
 
 ## 3. 为什么用 transform 改位置，而不是 top 或 SVG 的 y
 
-先看代价。`top` 是布局属性：每帧改它都要重算布局再重绘，8 行就是每帧 8 次重排，还会连带影响兄弟节点的位置。`transform` 是合成属性：元素被提升为独立合成层之后，后续每帧只改矩阵、交给合成线程，主线程与布局、绘制都无关。行上那句 `will-change: transform` 就是为它准备的。
+先看代价。`top` 是布局属性：每帧改它都要重算布局再重绘，8 行就是每帧 8 次重排，还会连带影响兄弟节点。`transform` 是合成属性：元素进了独立合成层之后，后续每帧只改矩阵、交给合成线程，主线程与布局、绘制都无关。行上那句 `will-change: transform` 就是为它准备的。
 
-SVG 的 `y` 属性更糟：它既不是布局属性也不是合成属性，改它要走属性解析加重绘整棵子树，叠上滤镜和 `clip-path` 更贵。所以本组件里所有会动的东西都只碰 `transform`：行用 `translateY` 换位，条长用 `scaleX`。
+SVG 的 `y` 更糟：它既不是布局属性也不是合成属性，改它要走属性解析加重绘整棵子树，叠上滤镜和 `clip-path` 更贵。所以本组件里所有会动的东西都只碰 `transform`：行用 `translateY` 换位，条长用 `scaleX`。
 
 ```css
 .fill {
@@ -140,9 +134,9 @@ r.fill.style.transform = 'scaleX(' + (val / MAX) + ')';
 
 演示里 FLIP 时长固定 520ms，帧间隔是 `1150 / 速度`。速度 1.0× 时间隔 1150ms，动画早播完了；拉到 2.5×，间隔 460ms，比动画还短，于是每一帧都在打断上一段还没结束的过渡。
 
-这不会出问题，因为第 ① 步读的是 rect，不是数据。rect 反映的是**过渡当前播放到的瞬时位置**，所以 Invert 量算出来的是"从我此刻所在之处到新位置"，接得上。假如改成"用名次 × 行高"来推算 First，打断那一刻元素实际还在半路上，推算值就会让它从半路瞬移回起点，看起来就是抖动。
+这不会出问题，因为第 ① 步读的是 rect，反映**过渡当前播放到的瞬时位置**，Invert 量算出来的是"从我此刻所在之处到新位置"，接得上。假如改用"名次 × 行高"推算 First，打断那一刻元素还在半路上，推算值会让它瞬移回起点，看起来就是抖动。
 
-顺手一个好处：重排、缩放、滚动之后 FLIP 依然正确，因为它每次都实测。你要是写过"缓存坐标 + 手动失效"的动画，就知道省掉这套失效逻辑有多轻松。
+顺带一个好处：重排、缩放、滚动之后 FLIP 依然正确，因为它每次都实测，省掉了"缓存坐标 + 手动失效"那一套。
 
 ---
 
@@ -203,7 +197,7 @@ return a.id < b.id ? -1 : 1;
 - [ ] First 读的是 rect，不是"名次 × 行高"的推算值
 - [ ] 换位只用 `translateY`，条长只用 `scaleX`，动画中没有 `top` / `width` / SVG `y`
 - [ ] 数值标签走 rAF 插值，文本内容也插值，不是瞬变
-- [ ] 插值系数按帧间隔归一（`1 - Math.pow(1 - k, dt / 16.6667)`）
+- [ ] 插值系数按帧间隔归一（`1 - Math.pow(1 - 0.16, k)`，`k = dt / 16.6667`）
 - [ ] 比较函数有确定的 tie-break，同分不抖
 - [ ] 暂停且标签停稳后停止排帧，`prefers-reduced-motion` 分支已处理
 - [ ] 有数值轴刻度和一句"这数据是什么"的说明
