@@ -107,6 +107,37 @@ R.widgets.forEach(w => {
   if (!/~~~/.test(doc) && fenced % 2 !== 0) fail(w.id, 'doc: 代码围栏未闭合');
   if (!/- \[ \]/.test(doc)) fail(w.id, 'doc: 缺自查清单 checkbox');
 
+  /* 代码块与组件源码的一致性（CONTRIBUTING §3）：
+     讲解实现的块必须逐行取自组件文件；反面例子 / 建议写法允许不在源码里，
+     但正文要标注。判据：块首行在源码里找不到，且前文没有标注词 -> 警告。 */
+  const srcText = html;
+  const LABEL = /(假想|反面|反例|不在本组件|不是本组件|不在组件|不在.*文件|建议的|对照|等价|封装写法|理想版本|伪代码|另一种写法|常见|流传)/;
+  /* 每个代码块归属哪个标题：§0 先想清楚 / §7 接进真实项目 是规范里
+     允许出现非组件代码的两节，其余小节里的块必须能回查源码 */
+  const heads = [...doc.matchAll(/^(#{2,3})\s+(.*)$/gm)].map(m => ({ i: m.index, t: m[2] }));
+  function sectionOf(idx) {
+    let cur = '';
+    for (const h of heads) { if (h.i < idx) cur = h.t; else break; }
+    return cur;
+  }
+  const blocks = [...doc.matchAll(/```(js|css|html|javascript)\n([\s\S]*?)```/g)];
+  blocks.forEach((b, bi) => {
+    const code = b[2].trim();
+    const first = code.split('\n').map(s => s.trim()).filter(Boolean)[0];
+    if (!first) return;
+    if (srcText.includes(first)) return;
+    const sec = sectionOf(b.index);
+    if (/先想清楚|接进真实项目/.test(sec)) return;
+    /* 标注可以写在块前的正文里，也可以写在块内的注释里 */
+    const before = doc.slice(Math.max(0, b.index - 320), b.index);
+    if (LABEL.test(before) || LABEL.test(code)) return;
+    /* 允许省略参数：doc 写 `function flip(idx, to) {`，源码是 `function flip(idx, to, now) {` */
+    const head = first.replace(/\/\/.*$/, '').replace(/[{;]\s*$/, '').trim();
+    const cut = head.split(/,(?![^()]*\))/)[0].trim();
+    if (cut.length > 8 && srcText.includes(cut)) return;
+    soft(w.id, `doc: 「${sec.slice(0, 14)}」里的代码块 #${bi + 1} 首行不在组件源码里，也未标注是对照/建议写法`);
+  });
+
   /* --- 语言规范：AI 味 --- */
   const prose = proseOnly(doc);
   const dashes = (prose.match(/——/g) || []).length;

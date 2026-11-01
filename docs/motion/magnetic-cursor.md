@@ -8,7 +8,7 @@
 
 ## 0. 先想清楚：它为什么不"廉价"
 
-把 CSS 写成这样就叫"廉价"：
+把 CSS 写成这样就叫"廉价"（下面是假想的反面写法，不在组件文件里）：
 
 ```css
 .btn:hover { transform: translate(8px, 4px); }
@@ -31,16 +31,15 @@
 拿到元素中心后，算指针相对中心的偏移：
 
 ```js
-var dx = pointer.x - it.bx;
-var dy = pointer.y - it.by;
+var dx = pointer.x - it.bx, dy = pointer.y - it.by;
 var dist = Math.hypot(dx, dy);
 ```
 
 直接 `dx * 0.35` 会有一个刺眼的问题：**指针跨过生效半径边界的那一帧，位移从 27px 突然跳到 0**。用衰减因子解决：
 
 ```js
-var falloff = 1 - dist / it.r;   // 1 → 0
-falloff = falloff * falloff;     // 平方，靠近边缘时衰减更缓
+var falloff = 1 - dist / it.r;
+falloff = falloff * falloff;         // 平方衰减更柔和
 it.tx = dx * CFG.strength * falloff;
 it.ty = dy * CFG.strength * falloff;
 ```
@@ -108,10 +107,11 @@ else raf = null;                 // 静止即停循环
 外层元素被吸向指针，**里面的文字再往同方向多走一小截**：
 
 ```js
-it.inner.style.transform = 'translate3d(' + it.cx * 0.35 + 'px,' + it.cy * 0.35 + 'px,0)';
+it.inner.style.transform = 'translate3d(' +
+  (it.cx * CFG.innerRatio).toFixed(2) + 'px,' + (it.cy * CFG.innerRatio).toFixed(2) + 'px,0)';
 ```
 
-视觉上像内容有重量、被惯性拖在后面。代价是一次乘法。演示面板里可以把它关掉再打开对比。
+视觉上像内容有重量、被惯性拖在后面（`CFG.innerRatio` 在演示里是 `0.35`）。代价是一次乘法。演示面板里可以把它关掉再打开对比。
 
 用 `translate3d` 而不是 `translate`：前者强制元素进 GPU 合成层，`will-change: transform` 同理。**元素多时别滥用**，每个合成层都吃显存。
 
@@ -127,7 +127,7 @@ it.inner.style.transform = 'translate3d(' + it.cx * 0.35 + 'px,' + it.cy * 0.35 
 
 ## 7. 接进真实项目
 
-剥掉控制面板和调试环，核心就是「记坐标 → 算目标 → 弹簧追赶」三步。抽成属性挂到既有元素上更好用：
+剥掉控制面板和调试环，核心就是「记坐标 → 算目标 → 弹簧追赶」三步。抽成属性挂到既有元素上更好用 —— 下面两段是建议的封装写法，不在本组件文件里：
 
 ```html
 <button data-magnet="120">订阅</button>
@@ -139,7 +139,7 @@ document.querySelectorAll('[data-magnet]').forEach(enhance);
 
 - **适合**：CTA 按钮、图标按钮、导航项、卡片里的"查看详情"。
 - **不适合**：表单输入框（抢焦点会干扰光标定位）、密集列表项（互相挤）、以及任何需要精确点击的小目标。
-- 一个页面里**最多给 1 ~ 2 个元素**开磁吸。全都吸，等于没有重点，而且会明显掉帧。
+- 一个页面里**最多给 1 ~ 2 个元素**开磁吸。全都吸，等于没有重点，磁吸也就失去了"突出重点"这个唯一作用。
 
 ---
 
