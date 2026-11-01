@@ -260,8 +260,7 @@
           '<div class="stage">' +
             '<div class="stage-bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span>' +
               '<span style="margin-left:8px" id="stagePath">' + esc(w.file) + '</span></div>' +
-            '<iframe id="stage" title="' + esc(w.title) + ' 演示" src="' + w.file + '" style="height:' + (w.viewport || 320) + 'px"></iframe>' +
-          '</div>' +
+            '<iframe id="stage" title="' + esc(w.title) + ' 演示" src="' + w.file + '" style="height:' + (w.viewport || 320) + 'px"></iframe>' +          '</div>' +
           '<p class="mini" id="demoHint" style="margin-top:9px">演示区可交互；若下方提示源码未加载，说明你是用 file:// 直接打开的，请用本地服务器预览。</p>' +
         '</div>' +
       '</section>' +
@@ -322,6 +321,7 @@
     loadDesc(w);
     loadCode(w);
     loadDoc(w);
+    fitStage(w);
     window.scrollTo({ top: 0, behavior: 'auto' });
   }
   function go(w) { if (w) location.hash = w.id; }
@@ -414,6 +414,51 @@
       h.addEventListener('mouseenter', function () { a.style.opacity = '.7'; });
       h.addEventListener('mouseleave', function () { a.style.opacity = '0'; });
     });
+  }
+
+  /* ---------- ① 演示区自适应 ----------
+     注册表里的 viewport 是作者估的固定值，量不准就会把控件裁掉。
+     组件与详情页同源，可以直接读 contentDocument 量真实内容高度。
+     做法：不 resize（那会让写 height:100% 的组件重新流式变高），
+     而是取所有可见元素的最大底边 —— 被 overflow 裁掉的元素
+     仍然报告真实位置，所以一次就能量准。只做"变高"，不做"变矮"，
+     保底不低于注册表值（内部滚动的组件需要那个高度）。 */
+  var STAGE_MAX = 760;
+  function fitStage(w) {
+    var f = document.getElementById('stage');
+    if (!f) return;
+    var base = w.viewport || 320;
+    function measure() {
+      var d;
+      try { d = f.contentDocument; } catch (e) { return 0; }
+      if (!d || !d.body) return 0;
+      var maxB = 0, list = d.querySelectorAll('body *');
+      for (var i = 0; i < list.length; i++) {
+        var el = list[i], cs;
+        try { cs = d.defaultView.getComputedStyle(el); } catch (e) { continue; }
+        if (!cs || cs.display === 'none' || cs.visibility === 'hidden') continue;
+        if (cs.position === 'fixed') continue;
+        if (parseFloat(cs.opacity) === 0) continue;
+        var r = el.getBoundingClientRect();
+        if (!r.width && !r.height) continue;
+        if (r.bottom > maxB) maxB = r.bottom;
+      }
+      var pad = parseFloat(cs0(d)) || 0;
+      return Math.ceil(maxB + pad);
+    }
+    function cs0(d) { try { return d.defaultView.getComputedStyle(d.body).paddingBottom; } catch (e) { return 0; } }
+    function apply() {
+      var need = measure();
+      if (need > base && need <= STAGE_MAX) {
+        f.style.height = need + 'px';
+      } else if (need > STAGE_MAX) {
+        f.style.height = STAGE_MAX + 'px';
+        var hint = document.getElementById('demoHint');
+        if (hint) hint.textContent = '演示内容较长，已限高 ' + STAGE_MAX + 'px；点右上角「新窗口」看完整版。';
+      }
+    }
+    if (f.contentDocument && f.contentDocument.readyState === 'complete') setTimeout(apply, 260);
+    f.addEventListener('load', function () { setTimeout(apply, 260); });
   }
 
   /* ---------------- 启动 / 路由 ---------------- */
