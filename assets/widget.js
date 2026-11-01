@@ -157,7 +157,10 @@
       if (/^\s*\|.*\|\s*$/.test(ln) && i + 1 < lines.length && /^\s*\|[\s:|-]+\|\s*$/.test(lines[i + 1])) {
         flushList();
         var head = splitRow(ln), align = splitRow(lines[i + 1]).map(function (c) {
-          return /:^?:$/.test(c) ? '' : /-+:$/.test(c) ? 'right' : 'left';
+          var s = c.trim();
+          if (/^:.*:$/.test(s)) return 'center';
+          if (/:$/.test(s)) return 'right';
+          return 'left';
         });
         i += 2;
         var rows = [];
