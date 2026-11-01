@@ -296,19 +296,16 @@
         '<div class="part-body"><article class="doc" id="docBody"><p class="mini">载入中…</p></article></div>' +
       '</section>';
 
-    /* 上下篇导航 */
+    /* 上下篇导航：按钮每次重建，键盘监听只在启动时挂一次（见文件底部），
+       否则每切一个组件就多一个监听器，按一次方向键会连跳多页 */
     var prev = R.widgets[idx - 1], next = R.widgets[idx + 1];
+    navState.prev = prev; navState.next = next;
     document.getElementById('prevBtn').onclick = function () { go(prev); };
     document.getElementById('nextBtn').onclick = function () { go(next); };
     document.getElementById('prevBtn').disabled = !prev;
     document.getElementById('nextBtn').disabled = !next;
     document.getElementById('prevBtn').title = prev ? prev.title : '已是第一个';
     document.getElementById('nextBtn').title = next ? next.title : '已是最后一个';
-    document.addEventListener('keydown', function (e) {
-      if (e.target.tagName === 'INPUT') return;
-      if (e.key === 'ArrowLeft' && prev) { e.preventDefault(); go(prev); }
-      if (e.key === 'ArrowRight' && next) { e.preventDefault(); go(next); }
-    });
 
     document.getElementById('reloadBtn').onclick = function () {
       var f = document.getElementById('stage'); f.src = w.file + '?r=' + Date.now(); toast('已重载');
@@ -420,7 +417,20 @@
   }
 
   /* ---------------- 启动 / 路由 ---------------- */
-  function boot() { render((location.hash || '#magnetic-cursor').slice(1)); }
+  var navState = { prev: null, next: null };
+  document.addEventListener('keydown', function (e) {
+    if (/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return;
+    if (e.key === 'ArrowLeft' && navState.prev) { e.preventDefault(); go(navState.prev); }
+    if (e.key === 'ArrowRight' && navState.next) { e.preventDefault(); go(navState.next); }
+  });
+
+  function boot() {
+    var id = (location.hash || '').replace(/^#/, '');
+    /* 教学文档里的标题锚点是 #sec-3 这种，不是组件 id，遇到就别重渲染，
+       否则点一个锚点会把整个页面换掉 */
+    if (id && !findWidget(id)) return;
+    render(id || 'magnetic-cursor');
+  }
   window.addEventListener('hashchange', boot);
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
 })();
